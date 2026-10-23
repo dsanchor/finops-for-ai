@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Risk agent (A2A)",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "127.0.0.1", "port": 5679 },
+      "preLaunchTask": "Open risk inspector"
+    },
+    {
+      "name": "Customer agent (A2A)",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "127.0.0.1", "port": 5680 },
+      "preLaunchTask": "Open customer inspector"
+    }
+  ]
+}

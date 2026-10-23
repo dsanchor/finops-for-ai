@@ -1,0 +1,79 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Validate risk ports",
+      "type": "aitk",
+      "command": "debug-check-prerequisites",
+      "args": { "portOccupancy": [5679, 8001] }
+    },
+    {
+      "label": "Validate customer ports",
+      "type": "aitk",
+      "command": "debug-check-prerequisites",
+      "args": { "portOccupancy": [5680, 8002] }
+    },
+    {
+      "label": "Run risk agent",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["-m", "debugpy", "--listen", "127.0.0.1:5679", "-m", "agents.risk"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": ["Validate risk ports"],
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": { "regexp": "^(.*)$", "message": 1 },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Application startup complete|Uvicorn running on"
+        }
+      }
+    },
+    {
+      "label": "Run customer agent",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["-m", "debugpy", "--listen", "127.0.0.1:5680", "-m", "agents.customer"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": ["Validate customer ports"],
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": { "regexp": "^(.*)$", "message": 1 },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Application startup complete|Uvicorn running on"
+        }
+      }
+    },
+    {
+      "label": "Open risk inspector",
+      "type": "shell",
+      "command": "echo '${input:riskInspector}'",
+      "dependsOn": ["Run risk agent"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Open customer inspector",
+      "type": "shell",
+      "command": "echo '${input:customerInspector}'",
+      "dependsOn": ["Run customer agent"],
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "riskInspector",
+      "type": "command",
+      "command": "ai-mlstudio.openTestTool",
+      "args": { "triggeredFrom": "tasks", "port": 8001 }
+    },
+    {
+      "id": "customerInspector",
+      "type": "command",
+      "command": "ai-mlstudio.openTestTool",
+      "args": { "triggeredFrom": "tasks", "port": 8002 }
+    }
+  ]
+}

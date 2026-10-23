@@ -1,0 +1,2 @@
+# Install the project with uv sync. This file records the local debug dependency.
+debugpy>=1.8,<2
