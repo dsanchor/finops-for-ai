@@ -7,20 +7,27 @@ import time
 from argparse import Namespace
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import pytest
 import pytest_asyncio
 import uvicorn
 from a2a.client import ClientConfig, ClientFactory
+from a2a.server.agent_execution import RequestContext
+from a2a.server.context import ServerCallContext
+from a2a.server.events import Event, EventQueue
 from a2a.types import (
     Artifact,
+    Role,
+    SendMessageRequest,
     StreamResponse,
     TaskArtifactUpdateEvent,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
 )
+from a2a.types import Message as A2AMessage
 from a2a.types import Part as A2APart
 from agent_framework import (
     BaseChatClient,
@@ -30,6 +37,10 @@ from agent_framework import (
     Message,
     ResponseStream,
 )
+from agent_framework.foundry import FoundryChatClient
+from azure.ai.projects.aio import AIProjectClient
+from azure.identity.aio import AzureCliCredential
+from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from agents.config import Settings
@@ -55,6 +66,7 @@ class FakeChatClient(BaseChatClient):
         super().__init__()
         self.prompts: list[str] = []
         self.options: list[Mapping[str, Any]] = []
+        self.request_kwargs: dict[str, dict[str, Any]] = {}
 
     def _inner_get_response(
         self,
@@ -67,6 +79,7 @@ class FakeChatClient(BaseChatClient):
         prompt = messages[-1].text
         self.prompts.append(prompt)
         self.options.append(options)
+        self.request_kwargs[prompt] = kwargs
 
         async def updates() -> AsyncIterator[ChatResponseUpdate]:
             if prompt == "FAIL":
@@ -100,7 +113,9 @@ async def live_agent(request):
         config = settings(request.param, public_url=url)
         app = create_app(
             config,
-            executor_factory=lambda: UsageExecutor(build_agent(config, model), config),
+            executor_factory=lambda context: UsageExecutor(
+                build_agent(config, model), config, context
+            ),
         )
         server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="on"))
         task = asyncio.create_task(server.serve(sockets=[sock]))
@@ -175,6 +190,114 @@ async def test_concurrent_requests_are_isolated(live_agent):
             await client.close()
     assert responses == [f"Respuesta: Consulta {i}" for i in range(8)]
     assert sorted(model.prompts) == [f"Consulta {i}" for i in range(8)]
+
+
+async def test_x_agent_headers_are_isolated_per_request(live_agent):
+    url, model, _ = live_agent
+
+    async def send(index, agent_header):
+        headers = {"Authorization": "Bearer inbound-only", "X-Unrelated": "not-forwarded"}
+        if agent_header is not None:
+            headers["x-AGENT"] = agent_header
+        async with httpx.AsyncClient(timeout=10, headers=headers) as http:
+            client = await ClientFactory(ClientConfig(httpx_client=http)).create_from_url(url)
+            try:
+                prompt = f"Header request {index}"
+                assert await stream_request(client, prompt) == f"Respuesta: {prompt}"
+            finally:
+                await client.close()
+        expected = {"X-Agent": agent_header} if agent_header is not None else {}
+        assert model.request_kwargs[prompt].get("extra_headers", {}) == expected
+
+    await asyncio.gather(
+        *(send(index, f"onboarded-agent-{index}" if index % 2 else None) for index in range(8))
+    )
+    await send("after-concurrent-requests", None)
+
+
+class CollectingEventQueue(EventQueue):
+    def __init__(self):
+        self.events: list[Event] = []
+
+    async def enqueue_event(self, event: Event) -> None:
+        self.events.append(event)
+
+
+@pytest.mark.parametrize("kind", ["risk", "customer"])
+@pytest.mark.parametrize("agent_header", [None, "apim-onboarded-agent"])
+async def test_x_agent_reaches_foundry_http_request(kind, agent_header, monkeypatch):
+    requests: list[httpx.Request] = []
+
+    def respond(request):
+        requests.append(request)
+        response = {
+            "id": "resp_test",
+            "object": "response",
+            "created_at": 1,
+            "status": "completed",
+            "model": config.model,
+            "output": [],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+        events = [
+            {
+                "type": "response.output_text.delta",
+                "item_id": "msg_test",
+                "output_index": 0,
+                "content_index": 0,
+                "delta": "Respuesta",
+                "sequence_number": 1,
+            },
+            {"type": "response.completed", "response": response, "sequence_number": 2},
+        ]
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content="".join(
+                f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events
+            ),
+        )
+
+    config = settings(kind)
+    incoming_headers = {"authorization": "Bearer inbound-only", "x-unrelated": "not-forwarded"}
+    if agent_header is not None:
+        incoming_headers["x-agent"] = agent_header
+    context = RequestContext(
+        call_context=ServerCallContext(state={"headers": incoming_headers}),
+        request=SendMessageRequest(
+            message=A2AMessage(
+                message_id=str(uuid4()),
+                role=Role.ROLE_USER,
+                parts=[A2APart(text="Hola")],
+            )
+        ),
+    )
+    queue = CollectingEventQueue()
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http,
+        AsyncOpenAI(
+            api_key="test-model-credential",
+            base_url="https://demo.services.ai.azure.com/api/projects/demo/openai",
+            http_client=http,
+        ) as sdk_client,
+        AzureCliCredential() as credential,
+        AIProjectClient(endpoint=config.project_endpoint, credential=credential) as project,
+    ):
+        monkeypatch.setattr(AIProjectClient, "get_openai_client", lambda self, **kwargs: sdk_client)
+        client = FoundryChatClient(project_client=project, model=config.model)
+        await UsageExecutor(build_agent(config, client), config, context).execute(context, queue)
+    assert len(requests) == 1
+    assert requests[0].headers.get("x-agent") == agent_header
+    assert requests[0].headers["authorization"] == "Bearer test-model-credential"
+    assert "x-unrelated" not in requests[0].headers
+    body = json.loads(requests[0].content)
+    assert body["model"] == config.model
+    assert body["stream"] is True
+    assert body["store"] is False
+    statuses = [
+        event.status.state for event in queue.events if isinstance(event, TaskStatusUpdateEvent)
+    ]
+    assert statuses[-1] == TaskState.TASK_STATE_COMPLETED
 
 
 async def test_model_failure_is_not_success(live_agent):

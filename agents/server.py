@@ -22,6 +22,7 @@ from azure.identity.aio import (
     ManagedIdentityCredential,
 )
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -33,8 +34,15 @@ logger = logging.getLogger(__name__)
 
 
 class UsageExecutor(A2AExecutor):
-    def __init__(self, agent: Agent, settings: Settings):
-        super().__init__(agent, stream=True)
+    def __init__(self, agent: Agent, settings: Settings, context: RequestContext):
+        headers = Headers(context.call_context.state.get("headers", {}))
+        agent_header = headers.get("x-agent")
+        run_kwargs = (
+            {"client_kwargs": {"extra_headers": {"X-Agent": agent_header}}}
+            if agent_header is not None
+            else {}
+        )
+        super().__init__(agent, stream=True, run_kwargs=run_kwargs)
         self.settings = settings
 
     async def handle_events(
@@ -65,14 +73,14 @@ class UsageExecutor(A2AExecutor):
 class PerRequestExecutor(AgentExecutor):
     """Each request gets an isolated Agent/session; only the model client is shared."""
 
-    def __init__(self, factory: Callable[[], AgentExecutor]):
+    def __init__(self, factory: Callable[[RequestContext], AgentExecutor]):
         self.factory = factory
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        await self.factory().execute(context, event_queue)
+        await self.factory(context).execute(context, event_queue)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        await self.factory().cancel(context, event_queue)
+        await self.factory(context).cancel(context, event_queue)
 
 
 def credential_for(settings: Settings) -> AsyncTokenCredential:
@@ -100,7 +108,7 @@ def build_agent(settings: Settings, client: SupportsChatGetResponse) -> Agent:
 
 
 def create_app(
-    settings: Settings, executor_factory: Callable[[], AgentExecutor] | None = None
+    settings: Settings, executor_factory: Callable[[RequestContext], AgentExecutor] | None = None
 ) -> Starlette:
     profile = PROFILES[settings.kind]
     card = AgentCard(
@@ -128,12 +136,12 @@ def create_app(
     )
     client: FoundryChatClient | None = None
 
-    def make_executor() -> AgentExecutor:
+    def make_executor(context: RequestContext) -> AgentExecutor:
         if executor_factory is not None:
-            return executor_factory()
+            return executor_factory(context)
         if client is None:
             raise RuntimeError("Foundry client has not started")
-        return UsageExecutor(build_agent(settings, client), settings)
+        return UsageExecutor(build_agent(settings, client), settings, context)
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
