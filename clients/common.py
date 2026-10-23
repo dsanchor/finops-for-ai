@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import httpx
-from a2a.client import ClientConfig, ClientFactory
+from a2a.client import A2ACardResolver, ClientConfig, ClientFactory
 from a2a.client.client import Client
 from a2a.client.errors import A2AClientError
 from a2a.types import Message, Part, Role, SendMessageRequest, TaskState
@@ -171,7 +171,12 @@ async def run(args: argparse.Namespace, kind: AgentKind) -> int:
                     streaming=True, httpx_client=http, supported_protocol_bindings=["JSONRPC"]
                 )
             )
-            client = await factory.create_from_url(args.url)
+            card_url = os.getenv(f"{kind.upper()}_AGENT_CARD_URL", "").strip()
+            if card_url:
+                card = await A2ACardResolver(http, card_url).get_agent_card(relative_card_path="/")
+                client = factory.create(card)
+            else:
+                client = await factory.create_from_url(args.url)
             try:
                 await asyncio.gather(*(one(i + 1, p, client) for i, p in enumerate(prompts)))
             finally:

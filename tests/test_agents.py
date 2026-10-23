@@ -14,6 +14,7 @@ import pytest
 import pytest_asyncio
 import uvicorn
 from a2a.client import ClientConfig, ClientFactory
+from a2a.client.errors import A2AClientError
 from a2a.server.agent_execution import RequestContext
 from a2a.server.context import ServerCallContext
 from a2a.server.events import Event, EventQueue
@@ -42,6 +43,7 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from openai import AsyncOpenAI
 from pydantic import ValidationError
+from starlette.routing import Route
 
 from agents.config import Settings
 from agents.profiles import PROFILES
@@ -104,7 +106,9 @@ class FakeChatClient(BaseChatClient):
 
 
 @pytest_asyncio.fixture(params=["risk", "customer"])
-async def live_agent(request):
+async def live_agent(request, monkeypatch):
+    monkeypatch.delenv("RISK_AGENT_CARD_URL", raising=False)
+    monkeypatch.delenv("CUSTOMER_AGENT_CARD_URL", raising=False)
     model = FakeChatClient()
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -117,6 +121,12 @@ async def live_agent(request):
                 build_agent(config, model), config, context
             ),
         )
+        card_endpoint = next(
+            route.endpoint
+            for route in app.routes
+            if isinstance(route, Route) and route.path == "/.well-known/agent-card.json"
+        )
+        app.router.routes.append(Route("/gateway/agent-card.json", card_endpoint))
         server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="on"))
         task = asyncio.create_task(server.serve(sockets=[sock]))
         try:
@@ -352,8 +362,20 @@ async def test_random_load_and_jsonl(live_agent, tmp_path, capsys):
     assert '"failures": 0' in captured.err
 
 
-async def test_single_request_prints_input_and_streamed_output(live_agent, tmp_path, capsys):
+@pytest.mark.parametrize("card_url_mode", ["missing", "empty", "custom"])
+async def test_single_request_prints_input_and_streamed_output(
+    live_agent, tmp_path, capsys, monkeypatch, card_url_mode
+):
     url, _, config = live_agent
+    other_kind = "customer" if config.kind == "risk" else "risk"
+    monkeypatch.setenv(f"{other_kind.upper()}_AGENT_CARD_URL", url + "/wrong-agent-card")
+    if card_url_mode == "empty":
+        monkeypatch.setenv(f"{config.kind.upper()}_AGENT_CARD_URL", "")
+    elif card_url_mode == "custom":
+        monkeypatch.setenv(
+            f"{config.kind.upper()}_AGENT_CARD_URL",
+            url + "/gateway/agent-card.json?source=apim",
+        )
     document = tmp_path / "informe.txt"
     document.write_text("Documento sintetico", encoding="utf-8")
     output = tmp_path / "single.jsonl"
@@ -367,7 +389,7 @@ async def test_single_request_prints_input_and_streamed_output(live_agent, tmp_p
         concurrency=1,
         interval=0,
         timeout=10,
-        url=url,
+        url=url + "/not-the-discovery-path" if card_url_mode == "custom" else url,
         output=output,
     )
     assert await run(args, config.kind) == 0
@@ -378,6 +400,27 @@ async def test_single_request_prints_input_and_streamed_output(live_agent, tmp_p
     assert f"[{config.kind} #1] Peticion:\n{record['input']}\n" in captured.out
     assert f"[{config.kind} #1] Respuesta:\n{record['output']}" in captured.out
     assert record["output"] in captured.out
+
+
+async def test_configured_card_url_failure_does_not_fall_back(live_agent, monkeypatch):
+    url, model, config = live_agent
+    monkeypatch.setenv(f"{config.kind.upper()}_AGENT_CARD_URL", url + "/missing-card.json")
+    args = Namespace(
+        seed=42,
+        document_sections=60,
+        random=False,
+        prompt="Hola",
+        document=[],
+        requests=1,
+        concurrency=1,
+        interval=0,
+        timeout=10,
+        url=url,
+        output=None,
+    )
+    with pytest.raises(A2AClientError, match="404"):
+        await run(args, config.kind)
+    assert model.prompts == []
 
 
 async def test_failed_load_returns_nonzero(live_agent, tmp_path, capsys):
