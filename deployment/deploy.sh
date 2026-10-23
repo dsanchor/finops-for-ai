@@ -21,6 +21,9 @@ Optional:
   CUSTOMER_APP_NAME          Default: customer-agent
   RISK_MODEL_DEPLOYMENT      Default: gpt-5.6-sol
   CUSTOMER_MODEL_DEPLOYMENT  Default: gpt-5.4-mini
+  OPENAI_BASE_URL             Optional OpenAI v1 model endpoint (e.g. APIM)
+  RISK_OPENAI_BASE_URL        Overrides OPENAI_BASE_URL for risk
+  CUSTOMER_OPENAI_BASE_URL    Overrides OPENAI_BASE_URL for customer
 
 Requires Bash, Azure CLI with the containerapp extension, curl with
 --retry-all-errors support, and an authenticated Azure CLI session.
@@ -102,7 +105,7 @@ fi
 [[ -n "$environment_id" ]] || die "Container Apps environment ID was not returned."
 
 deploy_agent() {
-    local name="$1" prefix="$2" port="$3" image="$4" model="$5"
+    local name="$1" prefix="$2" port="$3" image="$4" model="$5" openai_base_url="$6"
     local existing_id existing_environment principal_id assignment_id fqdn url
     local -a settings=(
         "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT"
@@ -114,6 +117,8 @@ deploy_agent() {
         "${prefix}_HOST=0.0.0.0"
         "${prefix}_PORT=$port"
         "${prefix}_MODEL_DEPLOYMENT=$model"
+        "OPENAI_BASE_URL="
+        "${prefix}_OPENAI_BASE_URL=$openai_base_url"
     )
 
     existing_id="$(azure containerapp list --resource-group "$RESOURCE_GROUP" \
@@ -165,6 +170,8 @@ deploy_agent() {
 }
 
 printf 'WARNING: Both agents will be publicly reachable without client authentication.\n' >&2
-deploy_agent "$RISK_APP_NAME" RISK 8001 "$RISK_IMAGE" "$RISK_MODEL_DEPLOYMENT"
-deploy_agent "$CUSTOMER_APP_NAME" CUSTOMER 8002 "$CUSTOMER_IMAGE" "$CUSTOMER_MODEL_DEPLOYMENT"
+deploy_agent "$RISK_APP_NAME" RISK 8001 "$RISK_IMAGE" "$RISK_MODEL_DEPLOYMENT" \
+    "${RISK_OPENAI_BASE_URL-${OPENAI_BASE_URL:-}}"
+deploy_agent "$CUSTOMER_APP_NAME" CUSTOMER 8002 "$CUSTOMER_IMAGE" "$CUSTOMER_MODEL_DEPLOYMENT" \
+    "${CUSTOMER_OPENAI_BASE_URL-${OPENAI_BASE_URL:-}}"
 printf 'Health checks passed. They do not verify Foundry inference or RBAC propagation.\n'

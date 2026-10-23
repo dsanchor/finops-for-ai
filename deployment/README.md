@@ -47,6 +47,10 @@ export CUSTOMER_IMAGE="ghcr.io/<owner>/<repo>-customer:<tag>"
 export RISK_MODEL_DEPLOYMENT="gpt-5.6-sol"
 export CUSTOMER_MODEL_DEPLOYMENT="gpt-5.4-mini"
 
+# Opcional: enrutar las llamadas al modelo a traves de APIM.
+# export OPENAI_BASE_URL="https://finops4ai.azure-api.net/finopsforai/openai/v1"
+# RISK_OPENAI_BASE_URL y CUSTOMER_OPENAI_BASE_URL sobrescriben el destino por app.
+
 bash deployment/deploy.sh
 ```
 
@@ -56,6 +60,12 @@ y las apps. El script no carga `.env`, no cambia la suscripcion predeterminada
 de Azure CLI y detiene la ejecucion ante errores. Se puede volver a ejecutar:
 reutiliza el entorno, actualiza las apps y no duplica las asignaciones existentes.
 No mueve apps que ya pertenezcan a otro entorno.
+
+El script pasa las URLs base OpenAI a las apps tanto al crearlas como al
+actualizarlas. Sin overrides, usa Foundry directamente; un override por app
+vacio permite omitir la URL compartida. Mantiene Azure Identity y el scope
+`https://ai.azure.com/.default`: APIM debe validar esa audiencia y configurar
+su autenticacion hacia Foundry. No configura las politicas de APIM.
 
 ## Acceso, estado y comprobacion
 

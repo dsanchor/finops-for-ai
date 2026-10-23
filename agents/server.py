@@ -158,6 +158,8 @@ def create_app(
                 **project_options,
             ) as project:
                 client = FoundryChatClient(project_client=project, model=settings.model)
+                if settings.openai_base_url is not None:
+                    client.client.base_url = settings.openai_base_url
                 client.client.timeout = httpx.Timeout(settings.request_timeout)
                 client.client.max_retries = settings.max_retries
                 async with client.client:

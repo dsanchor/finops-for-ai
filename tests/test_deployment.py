@@ -109,6 +109,9 @@ def deployment_cli(tmp_path):
         "CUSTOMER_APP_NAME",
         "RISK_MODEL_DEPLOYMENT",
         "CUSTOMER_MODEL_DEPLOYMENT",
+        "OPENAI_BASE_URL",
+        "RISK_OPENAI_BASE_URL",
+        "CUSTOMER_OPENAI_BASE_URL",
         "FAIL_COMMAND",
     ):
         env.pop(key, None)
@@ -178,6 +181,27 @@ def test_rerun_reuses_resources_and_roles(deployment_cli):
     assert sum(call[1:4] == ["containerapp", "identity", "assign"] for call in calls) == 2
     updates = [call for call in calls if call[1:3] == ["containerapp", "update"]]
     assert any(deployment_cli["CUSTOMER_IMAGE"] in call for call in updates)
+
+
+@pytest.mark.parametrize("customer_override", [None, "", "https://customer.example/openai/v1"])
+def test_deploys_optional_model_endpoint(deployment_cli, customer_override):
+    apim_url = "https://finops4ai.azure-api.net/finopsforai/openai/v1"
+    deployment_cli["OPENAI_BASE_URL"] = apim_url
+    if customer_override is not None:
+        deployment_cli["CUSTOMER_OPENAI_BASE_URL"] = customer_override
+    for _ in range(2):
+        result = run_deployment(deployment_cli)
+        assert result.returncode == 0, result.stderr
+    calls = commands(deployment_cli)
+    for prefix, endpoint in (
+        ("RISK", apim_url),
+        ("CUSTOMER", apim_url if customer_override is None else customer_override),
+    ):
+        configured = [call for call in calls if f"{prefix}_MODEL_DEPLOYMENT=" in " ".join(call)]
+        assert len(configured) == 2
+        for call in configured:
+            assert "OPENAI_BASE_URL=" in call
+            assert f"{prefix}_OPENAI_BASE_URL={endpoint}" in call
 
 
 @pytest.mark.parametrize(

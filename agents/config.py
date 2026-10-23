@@ -17,6 +17,7 @@ class Settings(BaseModel):
     public_url: str
     auth_mode: Literal["default", "cli", "managed_identity"] = "default"
     managed_identity_client_id: str | None = None
+    openai_base_url: str | None = None
     api_version: str | None = None
     allow_preview: bool = False
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
@@ -31,6 +32,26 @@ class Settings(BaseModel):
         if url.scheme != "https" or not url.netloc or "/api/projects/" not in url.path:
             raise ValueError(
                 "Use a Foundry HTTPS project endpoint ending in /api/projects/<project>"
+            )
+        return value.rstrip("/")
+
+    @field_validator("openai_base_url")
+    @classmethod
+    def validate_openai_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        url = urlsplit(value)
+        if (
+            url.scheme != "https"
+            or not url.hostname
+            or url.username is not None
+            or url.password is not None
+            or url.query
+            or url.fragment
+        ):
+            raise ValueError(
+                "OpenAI base URL must be an absolute HTTPS URL "
+                "without credentials, query or fragment"
             )
         return value.rstrip("/")
 
@@ -62,6 +83,7 @@ class Settings(BaseModel):
         for field in (
             "auth_mode",
             "managed_identity_client_id",
+            "openai_base_url",
             "api_version",
             "allow_preview",
             "reasoning_effort",

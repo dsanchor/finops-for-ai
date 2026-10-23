@@ -33,7 +33,28 @@ cp .env.example .env
 Edita `.env` con el endpoint de tu proyecto y los nombres de despliegue.
 El endpoint debe tener este formato:
 `https://<cuenta>.services.ai.azure.com/api/projects/<proyecto>`.
-No uses el endpoint de recurso terminado en `/openai/v1`.
+No pongas una URL `/openai/v1` en `FOUNDRY_PROJECT_ENDPOINT`.
+
+Para enviar las llamadas al modelo a traves de APIM, configura una URL base
+OpenAI v1 independiente:
+
+```bash
+OPENAI_BASE_URL=https://finops4ai.azure-api.net/finopsforai/openai/v1
+```
+
+`RISK_OPENAI_BASE_URL` y `CUSTOMER_OPENAI_BASE_URL` permiten destinos distintos
+por agente. Si no se configura ninguna URL base, se conserva el endpoint del
+SDK de Foundry. Un override por agente vacio desactiva la URL compartida para
+ese agente. Conserva el endpoint real del proyecto en `FOUNDRY_PROJECT_ENDPOINT`.
+Las solicitudes Responses van a `<OPENAI_BASE_URL>/responses`, manteniendo
+streaming y la cabecera `X-Agent` recibida.
+
+La autenticacion sigue usando el token Entra ID del SDK de proyectos, con scope
+`https://ai.azure.com/.default`; cambiar la URL no cambia la audiencia del token.
+APIM debe aceptar y validar esa audiencia y configurar la autenticacion hacia
+Foundry. No se anaden API keys, subscription keys ni se reenvia el token del
+cliente A2A. Si tu APIM exige un token para otra audiencia o una subscription
+key, esa configuracion de autenticacion requiere un cambio adicional.
 
 La autenticacion es **exclusivamente Azure Identity**, sin API keys:
 
@@ -55,6 +76,8 @@ archivo al arrancar. `.env` y variantes quedan excluidos de Git y del contexto D
 | --- | --- |
 | `FOUNDRY_PROJECT_ENDPOINT` | Endpoint obligatorio compartido |
 | `RISK_FOUNDRY_PROJECT_ENDPOINT`, `CUSTOMER_FOUNDRY_PROJECT_ENDPOINT` | Sobrescriben el proyecto por agente |
+| `OPENAI_BASE_URL` | URL base HTTPS opcional para el modelo (por ejemplo, APIM `/openai/v1`) |
+| `RISK_OPENAI_BASE_URL`, `CUSTOMER_OPENAI_BASE_URL` | Sobrescriben la URL base por agente; vacias usan el endpoint de Foundry |
 | `RISK_MODEL_DEPLOYMENT` | `gpt-5.6-sol` |
 | `CUSTOMER_MODEL_DEPLOYMENT` | `gpt-5.4-mini` |
 | `AUTH_MODE` | `default` en codigo; `cli` en el ejemplo |
