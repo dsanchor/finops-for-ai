@@ -3,8 +3,9 @@
 ## Simulacion de agentes y perfiles de consumo
 
 Dos servicios Python independientes implementados con **Microsoft Agent Framework**.
-Los modelos se consumen mediante `FoundryChatClient` (Responses API de un proyecto
-Microsoft Foundry). Los servicios no crean agentes remotos ni infraestructura de
+Los modelos se consumen mediante `OpenAIChatClient` (Responses API OpenAI v1),
+directamente en Azure OpenAI o a traves de APIM. No se necesita un proyecto
+Microsoft Foundry. Los servicios no crean agentes remotos ni infraestructura de
 Azure; el [script de despliegue](./deployment/README.md) permite aprovisionar
 Azure Container Apps de forma explicita.
 
@@ -14,15 +15,15 @@ Azure Container Apps de forma explicita.
 | Atencion al cliente | Retail | `gpt-5.4-mini` | 100 solicitudes, concurrencia 8, preguntas breves |
 
 Los nombres son **nombres de despliegue**, no una garantia de disponibilidad de esos
-modelos en Foundry. Deben existir en tu proyecto; cambia las variables si tienen
+modelos en Foundry. Deben existir en la cuenta de destino; cambia las variables si tienen
 otros nombres. El perfil premium/mini simula patrones de consumo, pero el coste real
 depende del modelo desplegado, los tokens, la cache y las tarifas de Azure.
 No se inventan precios ni se infiere el modelo a partir del nombre del despliegue.
 
 ## 1. Configuracion
 
-Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), un proyecto Foundry con
-los dos despliegues y una identidad con permisos de inferencia (por ejemplo,
+Requisitos: Python 3.12+, [uv](https://docs.astral.sh/uv/), un endpoint OpenAI v1
+con los dos despliegues y una identidad con permisos de inferencia (por ejemplo,
 **Foundry User**, anteriormente Azure AI User, en el ambito adecuado).
 
 ```bash
@@ -30,26 +31,25 @@ uv sync --frozen
 cp .env.example .env
 ```
 
-Edita `.env` con el endpoint de tu proyecto y los nombres de despliegue.
-El endpoint debe tener este formato:
-`https://<cuenta>.services.ai.azure.com/api/projects/<proyecto>`.
-No pongas una URL `/openai/v1` en `FOUNDRY_PROJECT_ENDPOINT`.
-
-Para enviar las llamadas al modelo a traves de APIM, configura una URL base
-OpenAI v1 independiente:
+Edita `.env` con la URL base OpenAI v1 y los nombres de despliegue. Usa el
+mismo cliente y la misma configuracion tanto para APIM como para Azure OpenAI:
 
 ```bash
 OPENAI_BASE_URL=https://finops4ai.azure-api.net/finopsforai/openai/v1
+# Alternativa directa, sin APIM:
+# OPENAI_BASE_URL=https://finopsforai.openai.azure.com/openai/v1
 ```
 
 `RISK_OPENAI_BASE_URL` y `CUSTOMER_OPENAI_BASE_URL` permiten destinos distintos
-por agente. Si no se configura ninguna URL base, se conserva el endpoint del
-SDK de Foundry. Un override por agente vacio desactiva la URL compartida para
-ese agente. Conserva el endpoint real del proyecto en `FOUNDRY_PROJECT_ENDPOINT`.
+por agente. Un override por agente vacio usa la URL compartida. Cada agente debe
+tener una URL base, ya sea compartida o propia; si falta, falla al arrancar.
+No se usa `FOUNDRY_PROJECT_ENDPOINT` ni se instancia el SDK de proyectos.
 Las solicitudes Responses van a `<OPENAI_BASE_URL>/responses`, manteniendo
 streaming y la cabecera `X-Agent` recibida.
+OpenAI v1 no necesita un parametro `api-version`; las antiguas variables
+`API_VERSION` y `ALLOW_PREVIEW` ya no se utilizan.
 
-La autenticacion sigue usando el token Entra ID del SDK de proyectos, con scope
+La autenticacion usa Azure Identity y un proveedor de tokens Entra ID, con scope
 `https://ai.azure.com/.default`; cambiar la URL no cambia la audiencia del token.
 APIM debe aceptar y validar esa audiencia y configurar la autenticacion hacia
 Foundry. No se anaden API keys, subscription keys ni se reenvia el token del
@@ -74,16 +74,12 @@ archivo al arrancar. `.env` y variantes quedan excluidos de Git y del contexto D
 
 | Variable | Uso / valor por defecto |
 | --- | --- |
-| `FOUNDRY_PROJECT_ENDPOINT` | Endpoint obligatorio compartido |
-| `RISK_FOUNDRY_PROJECT_ENDPOINT`, `CUSTOMER_FOUNDRY_PROJECT_ENDPOINT` | Sobrescriben el proyecto por agente |
-| `OPENAI_BASE_URL` | URL base HTTPS opcional para el modelo (por ejemplo, APIM `/openai/v1`) |
-| `RISK_OPENAI_BASE_URL`, `CUSTOMER_OPENAI_BASE_URL` | Sobrescriben la URL base por agente; vacias usan el endpoint de Foundry |
+| `OPENAI_BASE_URL` | URL base HTTPS OpenAI v1 compartida, necesaria si no hay override por agente |
+| `RISK_OPENAI_BASE_URL`, `CUSTOMER_OPENAI_BASE_URL` | Sobrescriben la URL base por agente; vacias usan la compartida |
 | `RISK_MODEL_DEPLOYMENT` | `gpt-5.6-sol` |
 | `CUSTOMER_MODEL_DEPLOYMENT` | `gpt-5.4-mini` |
 | `AUTH_MODE` | `default` en codigo; `cli` en el ejemplo |
 | `MANAGED_IDENTITY_CLIENT_ID` | Opcional |
-| `API_VERSION` | Opcional; por defecto la del SDK de proyectos fijado en el lockfile |
-| `ALLOW_PREVIEW` | `false`; activa APIs preview solo cuando sea necesario |
 | `REQUEST_TIMEOUT` | 180 segundos por solicitud HTTP al modelo |
 | `MAX_RETRIES` | 2 reintentos del SDK; pueden incrementar llamadas y consumo |
 | `LOG_LEVEL` | `INFO` |
@@ -94,7 +90,7 @@ archivo al arrancar. `.env` y variantes quedan excluidos de Git y del contexto D
 | `RISK_AGENT_URL`, `CUSTOMER_AGENT_URL` | URL de descubrimiento usada por los clientes |
 | `RISK_AGENT_CARD_URL`, `CUSTOMER_AGENT_CARD_URL` | URL completa opcional de la Agent Card; sustituye el descubrimiento por defecto |
 
-`AUTH_MODE`, `MANAGED_IDENTITY_CLIENT_ID`, `API_VERSION`, `ALLOW_PREVIEW`,
+`AUTH_MODE`, `MANAGED_IDENTITY_CLIENT_ID`,
 `REQUEST_TIMEOUT`, `MAX_RETRIES` y `LOG_LEVEL` admiten prefijos `RISK_` y
 `CUSTOMER_` para sobrescribir valores por agente. No se establece temperatura
 para evitar incompatibilidades con modelos de razonamiento. Las respuestas se
@@ -328,6 +324,6 @@ de depurar; desconectar el debugger no garantiza terminar el servidor.
 
 ### Referencias
 
-- [Microsoft Foundry provider de Agent Framework](https://learn.microsoft.com/agent-framework/integrations/by-component/model-providers/microsoft-foundry)
+- [OpenAI provider de Agent Framework](https://learn.microsoft.com/agent-framework/integrations/by-component/model-providers/openai)
 - [Hosting A2A de Agent Framework](https://learn.microsoft.com/agent-framework/hosting/self-hosting/a2a/server)
 - [SDK oficial de A2A](https://github.com/a2aproject/a2a-python)

@@ -13,13 +13,13 @@ from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from agent_framework import Agent, AgentResponseUpdate, Message, SupportsChatGetResponse
 from agent_framework.a2a import A2AExecutor
-from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
-from azure.ai.projects.aio import AIProjectClient
+from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import (
     AzureCliCredential,
     DefaultAzureCredential,
     ManagedIdentityCredential,
+    get_bearer_token_provider,
 )
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
@@ -96,7 +96,7 @@ def credential_for(settings: Settings) -> AsyncTokenCredential:
 
 def build_agent(settings: Settings, client: SupportsChatGetResponse) -> Agent:
     profile = PROFILES[settings.kind]
-    options: FoundryChatOptions = {"store": False}
+    options: OpenAIChatOptions = {"store": False}
     if settings.reasoning_effort is not None:
         options["reasoning"] = {"effort": settings.reasoning_effort}
     return Agent(
@@ -134,13 +134,13 @@ def create_app(
             )
         ],
     )
-    client: FoundryChatClient | None = None
+    client: OpenAIChatClient | None = None
 
     def make_executor(context: RequestContext) -> AgentExecutor:
         if executor_factory is not None:
             return executor_factory(context)
         if client is None:
-            raise RuntimeError("Foundry client has not started")
+            raise RuntimeError("Model client has not started")
         return UsageExecutor(build_agent(settings, client), settings, context)
 
     @asynccontextmanager
@@ -150,21 +150,16 @@ def create_app(
             yield
             return
         async with credential_for(settings) as credential:
-            project_options = {"api_version": settings.api_version} if settings.api_version else {}
-            async with AIProjectClient(
-                endpoint=settings.project_endpoint,
-                credential=credential,
-                allow_preview=settings.allow_preview,
-                **project_options,
-            ) as project:
-                client = FoundryChatClient(project_client=project, model=settings.model)
-                if settings.openai_base_url is not None:
-                    client.client.base_url = settings.openai_base_url
-                client.client.timeout = httpx.Timeout(settings.request_timeout)
-                client.client.max_retries = settings.max_retries
-                async with client.client:
-                    yield
-                client = None
+            client = OpenAIChatClient(
+                model=settings.model,
+                base_url=settings.openai_base_url,
+                api_key=get_bearer_token_provider(credential, "https://ai.azure.com/.default"),
+            )
+            client.client.timeout = httpx.Timeout(settings.request_timeout)
+            client.client.max_retries = settings.max_retries
+            async with client.client:
+                yield
+            client = None
 
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok", "agent": settings.kind})

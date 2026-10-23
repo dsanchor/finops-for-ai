@@ -19,10 +19,12 @@ roles en toda la suscripcion. No se usan API keys ni secretos de registro.
   `Microsoft.OperationalInsights`, crear los recursos y asignar Foundry User en
   la cuenta (por ejemplo, Contributor para los recursos y Role Based Access
   Control Administrator en la cuenta Foundry).
-- Proyecto Foundry existente con ambos despliegues de modelo. El endpoint y el
-  resource ID deben corresponder a la misma cuenta. La cuenta debe permitir
-  acceso de red desde Container Apps; este script no configura VNet, DNS privado
-  ni private endpoints.
+- Cuenta Foundry / Azure OpenAI existente con ambos despliegues de modelo y un
+  endpoint OpenAI v1, directo o publicado mediante APIM. No se necesita un
+  proyecto Foundry. El resource ID identifica la cuenta donde se asignan los
+  permisos; una URL de APIM no permite deducir ese ambito. El endpoint debe ser
+  accesible desde Container Apps; este script no configura VNet, DNS privado ni
+  private endpoints.
 - Ambas imagenes de GHCR deben ser **publicas** y compatibles con Linux/amd64.
   Publicarlas desde GitHub Actions no hace publicos los paquetes automaticamente:
   configura su visibilidad en GitHub Packages. No se admite GHCR privado.
@@ -39,7 +41,9 @@ export AZURE_SUBSCRIPTION_ID="<subscription-id>"
 export RESOURCE_GROUP="rg-ai-cost-control"
 export LOCATION="swedencentral"
 export FOUNDRY_RESOURCE_ID="/subscriptions/<foundry-subscription-id>/resourceGroups/<foundry-rg>/providers/Microsoft.CognitiveServices/accounts/<foundry-account>"
-export FOUNDRY_PROJECT_ENDPOINT="https://<foundry-account>.services.ai.azure.com/api/projects/<project>"
+export OPENAI_BASE_URL="https://finops4ai.azure-api.net/finopsforai/openai/v1"
+# Alternativa directa:
+# export OPENAI_BASE_URL="https://finopsforai.openai.azure.com/openai/v1"
 export RISK_IMAGE="ghcr.io/<owner>/<repo>-risk:<tag>"
 export CUSTOMER_IMAGE="ghcr.io/<owner>/<repo>-customer:<tag>"
 
@@ -47,8 +51,6 @@ export CUSTOMER_IMAGE="ghcr.io/<owner>/<repo>-customer:<tag>"
 export RISK_MODEL_DEPLOYMENT="gpt-5.6-sol"
 export CUSTOMER_MODEL_DEPLOYMENT="gpt-5.4-mini"
 
-# Opcional: enrutar las llamadas al modelo a traves de APIM.
-# export OPENAI_BASE_URL="https://finops4ai.azure-api.net/finopsforai/openai/v1"
 # RISK_OPENAI_BASE_URL y CUSTOMER_OPENAI_BASE_URL sobrescriben el destino por app.
 
 bash deployment/deploy.sh
@@ -62,8 +64,9 @@ reutiliza el entorno, actualiza las apps y no duplica las asignaciones existente
 No mueve apps que ya pertenezcan a otro entorno.
 
 El script pasa las URLs base OpenAI a las apps tanto al crearlas como al
-actualizarlas. Sin overrides, usa Foundry directamente; un override por app
-vacio permite omitir la URL compartida. Mantiene Azure Identity y el scope
+actualizarlas. Los overrides por app no definidos o vacios usan la URL compartida;
+si no hay URL compartida, se necesitan ambos overrides. No hay un endpoint
+implicito ni una dependencia del SDK de proyectos. Mantiene Azure Identity y el scope
 `https://ai.azure.com/.default`: APIM debe validar esa audiencia y configurar
 su autenticacion hacia Foundry. No configura las politicas de APIM.
 

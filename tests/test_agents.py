@@ -38,9 +38,9 @@ from agent_framework import (
     Message,
     ResponseStream,
 )
-from agent_framework.foundry import FoundryChatClient
-from azure.ai.projects.aio import AIProjectClient
-from azure.identity.aio import AzureCliCredential
+from agent_framework.openai import OpenAIChatClient
+from azure.core.credentials import AccessToken
+from azure.core.credentials_async import AsyncTokenCredential
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 from starlette.routing import Route
@@ -55,7 +55,7 @@ from clients.workloads import random_prompt, with_documents
 def settings(kind="risk", **overrides) -> Settings:
     return Settings(
         kind=kind,
-        project_endpoint="https://demo.services.ai.azure.com/api/projects/demo",
+        openai_base_url=overrides.pop("openai_base_url", "https://demo.openai.azure.com/openai/v1"),
         model="gpt-5.6-sol" if kind == "risk" else "gpt-5.4-mini",
         port=8001 if kind == "risk" else 8002,
         public_url=overrides.pop("public_url", "http://localhost:8001"),
@@ -233,7 +233,7 @@ class CollectingEventQueue(EventQueue):
         self.events.append(event)
 
 
-def foundry_stream_response(model: str) -> httpx.Response:
+def model_stream_response(model: str) -> httpx.Response:
     response = {
         "id": "resp_test",
         "object": "response",
@@ -265,12 +265,12 @@ def foundry_stream_response(model: str) -> httpx.Response:
 
 @pytest.mark.parametrize("kind", ["risk", "customer"])
 @pytest.mark.parametrize("agent_header", [None, "apim-onboarded-agent"])
-async def test_x_agent_reaches_foundry_http_request(kind, agent_header, monkeypatch):
+async def test_x_agent_reaches_model_http_request(kind, agent_header):
     requests: list[httpx.Request] = []
 
     def respond(request):
         requests.append(request)
-        return foundry_stream_response(config.model)
+        return model_stream_response(config.model)
 
     config = settings(kind)
     incoming_headers = {"authorization": "Bearer inbound-only", "x-unrelated": "not-forwarded"}
@@ -291,14 +291,11 @@ async def test_x_agent_reaches_foundry_http_request(kind, agent_header, monkeypa
         httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http,
         AsyncOpenAI(
             api_key="test-model-credential",
-            base_url="https://demo.services.ai.azure.com/api/projects/demo/openai",
+            base_url=config.openai_base_url,
             http_client=http,
         ) as sdk_client,
-        AzureCliCredential() as credential,
-        AIProjectClient(endpoint=config.project_endpoint, credential=credential) as project,
     ):
-        monkeypatch.setattr(AIProjectClient, "get_openai_client", lambda self, **kwargs: sdk_client)
-        client = FoundryChatClient(project_client=project, model=config.model)
+        client = OpenAIChatClient(model=config.model, async_client=sdk_client)
         await UsageExecutor(build_agent(config, client), config, context).execute(context, queue)
     assert len(requests) == 1
     assert requests[0].headers.get("x-agent") == agent_header
@@ -316,7 +313,11 @@ async def test_x_agent_reaches_foundry_http_request(kind, agent_header, monkeypa
 
 @pytest.mark.parametrize("kind", ["risk", "customer"])
 @pytest.mark.parametrize(
-    "base_url", [None, "https://finops4ai.azure-api.net/finopsforai/openai/v1"]
+    "base_url",
+    [
+        "https://finopsforai.openai.azure.com/openai/v1",
+        "https://finops4ai.azure-api.net/finopsforai/openai/v1",
+    ],
 )
 async def test_configured_model_endpoint_and_x_agent(kind, base_url, monkeypatch):
     config = settings(kind, auth_mode="cli", openai_base_url=base_url, public_url="http://agent")
@@ -324,17 +325,35 @@ async def test_configured_model_endpoint_and_x_agent(kind, base_url, monkeypatch
 
     def respond(request):
         requests.append(request)
-        return foundry_stream_response(config.model)
+        return model_stream_response(config.model)
 
-    async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(respond)) as model_http,
-        AsyncOpenAI(
-            api_key="test-model-credential",
-            base_url=f"{config.project_endpoint}/openai/v1",
-            http_client=model_http,
-        ) as sdk_client,
-    ):
-        monkeypatch.setattr(AIProjectClient, "get_openai_client", lambda self, **kwargs: sdk_client)
+    class TestCredential(AsyncTokenCredential):
+        def __init__(self):
+            self.scopes: list[tuple[str, ...]] = []
+            self.closed = False
+
+        async def get_token(self, *scopes: str, **kwargs: Any) -> AccessToken:
+            self.scopes.append(scopes)
+            return AccessToken("test-entra-token", int(time.time()) + 3600)
+
+        async def close(self) -> None:
+            self.closed = True
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            await self.close()
+
+    credential = TestCredential()
+    monkeypatch.setattr("agents.server.credential_for", lambda settings: credential)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as model_http:
+
+        def create_model_client(*, model, base_url, api_key):
+            sdk_client = AsyncOpenAI(api_key=api_key, base_url=base_url, http_client=model_http)
+            return OpenAIChatClient(model=model, async_client=sdk_client)
+
+        monkeypatch.setattr("agents.server.OpenAIChatClient", create_model_client)
         app = create_app(config)
         async with (
             app.router.lifespan_context(app),
@@ -351,9 +370,11 @@ async def test_configured_model_endpoint_and_x_agent(kind, base_url, monkeypatch
             finally:
                 await client.close()
     assert len(requests) == 1
-    expected_base = base_url or f"{config.project_endpoint}/openai/v1"
-    assert str(requests[0].url) == f"{expected_base}/responses"
+    assert str(requests[0].url) == f"{base_url}/responses"
     assert requests[0].headers["x-agent"] == "apim-onboarded-agent"
+    assert requests[0].headers["authorization"] == "Bearer test-entra-token"
+    assert credential.scopes == [("https://ai.azure.com/.default",)]
+    assert credential.closed
 
 
 async def test_model_failure_is_not_success(live_agent):
@@ -562,7 +583,7 @@ async def test_reasoning_option_reaches_model():
     assert model.options[0]["reasoning"] == {"effort": "high"}
 
 
-async def test_real_foundry_sdk_lifespan_without_inference():
+async def test_real_openai_sdk_lifespan_without_inference():
     app = create_app(settings(auth_mode="cli"))
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
@@ -596,9 +617,14 @@ def test_environment_settings(monkeypatch):
     monkeypatch.setattr("agents.config.load_dotenv", lambda: None)
     for name in ("OPENAI_BASE_URL", "RISK_OPENAI_BASE_URL", "CUSTOMER_OPENAI_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv(
-        "FOUNDRY_PROJECT_ENDPOINT", "https://shared.services.ai.azure.com/api/projects/demo"
-    )
+    for name in (
+        "FOUNDRY_PROJECT_ENDPOINT",
+        "RISK_FOUNDRY_PROJECT_ENDPOINT",
+        "CUSTOMER_FOUNDRY_PROJECT_ENDPOINT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    apim_url = "https://finops4ai.azure-api.net/finopsforai/openai/v1"
+    monkeypatch.setenv("OPENAI_BASE_URL", apim_url)
     monkeypatch.setenv("AUTH_MODE", "cli")
     risk = Settings.from_env("risk")
     customer = Settings.from_env("customer")
@@ -607,21 +633,15 @@ def test_environment_settings(monkeypatch):
     assert "max_output_tokens" not in risk.model_dump()
     assert "max_output_tokens" not in customer.model_dump()
     assert risk.auth_mode == customer.auth_mode == "cli"
-    assert risk.openai_base_url is customer.openai_base_url is None
-    apim_url = "https://finops4ai.azure-api.net/finopsforai/openai/v1"
-    monkeypatch.setenv("OPENAI_BASE_URL", apim_url)
     assert Settings.from_env("risk").openai_base_url == apim_url
     assert Settings.from_env("customer").openai_base_url == apim_url
     monkeypatch.setenv("RISK_OPENAI_BASE_URL", "https://risk.example/openai/v1/")
     assert Settings.from_env("risk").openai_base_url == "https://risk.example/openai/v1"
     assert Settings.from_env("customer").openai_base_url == apim_url
     monkeypatch.setenv("CUSTOMER_OPENAI_BASE_URL", "")
-    assert Settings.from_env("customer").openai_base_url is None
+    assert Settings.from_env("customer").openai_base_url == apim_url
     assert credential_for(risk).__class__.__name__ == "AzureCliCredential"
     monkeypatch.setenv("RISK_MODEL_DEPLOYMENT", "custom-premium")
-    monkeypatch.setenv(
-        "RISK_FOUNDRY_PROJECT_ENDPOINT", "https://other.services.ai.azure.com/api/projects/other"
-    )
     monkeypatch.setenv("RISK_MAX_OUTPUT_TOKENS", "900")
     monkeypatch.setenv("CUSTOMER_MAX_OUTPUT_TOKENS", "300")
     monkeypatch.setenv("RISK_AUTH_MODE", "managed_identity")
@@ -630,7 +650,7 @@ def test_environment_settings(monkeypatch):
     assert risk.model == "custom-premium"
     assert "max_output_tokens" not in risk.model_dump()
     assert "max_output_tokens" not in Settings.from_env("customer").model_dump()
-    assert risk.project_endpoint.startswith("https://other.")
+    assert risk.openai_base_url == "https://risk.example/openai/v1"
     assert risk.auth_mode == "managed_identity"
     assert credential_for(risk).__class__.__name__ == "ManagedIdentityCredential"
     assert Settings.from_env("customer").model == "gpt-5.4-mini"
@@ -639,15 +659,15 @@ def test_environment_settings(monkeypatch):
         Settings.from_env("risk")
 
 
-@pytest.mark.parametrize("url", ["", "http://bad/api/projects/x", "https://bad/openai/v1"])
-def test_invalid_foundry_endpoint(url):
-    with pytest.raises(ValidationError):
-        Settings.model_validate(
-            {
-                **settings().model_dump(),
-                "project_endpoint": url,
-            }
-        )
+def test_model_endpoint_is_required(monkeypatch):
+    monkeypatch.setattr("agents.config.load_dotenv", lambda: None)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    for kind in ("risk", "customer"):
+        monkeypatch.delenv(f"{kind.upper()}_OPENAI_BASE_URL", raising=False)
+        with pytest.raises(ValidationError, match="OpenAI base URL"):
+            Settings.from_env(kind)
+        monkeypatch.setenv(f"{kind.upper()}_OPENAI_BASE_URL", "https://agent.example/openai/v1")
+        assert Settings.from_env(kind).openai_base_url == "https://agent.example/openai/v1"
 
 
 @pytest.mark.parametrize(

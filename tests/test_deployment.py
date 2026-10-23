@@ -97,9 +97,7 @@ def deployment_cli(tmp_path):
         "RESOURCE_GROUP": "rg-agents",
         "LOCATION": "swedencentral",
         "FOUNDRY_RESOURCE_ID": FOUNDRY_ID,
-        "FOUNDRY_PROJECT_ENDPOINT": (
-            "https://foundry-account.services.ai.azure.com/api/projects/demo"
-        ),
+        "OPENAI_BASE_URL": "https://finops4ai.azure-api.net/finopsforai/openai/v1",
         "RISK_IMAGE": "ghcr.io/demo/project-risk:sha-123",
         "CUSTOMER_IMAGE": "ghcr.io/demo/project-customer:sha-123",
     }
@@ -109,9 +107,9 @@ def deployment_cli(tmp_path):
         "CUSTOMER_APP_NAME",
         "RISK_MODEL_DEPLOYMENT",
         "CUSTOMER_MODEL_DEPLOYMENT",
-        "OPENAI_BASE_URL",
         "RISK_OPENAI_BASE_URL",
         "CUSTOMER_OPENAI_BASE_URL",
+        "FOUNDRY_PROJECT_ENDPOINT",
         "FAIL_COMMAND",
     ):
         env.pop(key, None)
@@ -150,9 +148,8 @@ def test_deploys_both_agents_with_managed_identities(deployment_cli):
         assert call[call.index("--max-replicas") + 1] == "1"
         assert f"{prefix}_AUTH_MODE=managed_identity" in call
         assert f"{prefix}_MANAGED_IDENTITY_CLIENT_ID=" in call
-        assert (
-            f"{prefix}_FOUNDRY_PROJECT_ENDPOINT={deployment_cli['FOUNDRY_PROJECT_ENDPOINT']}"
-        ) in call
+        assert f"{prefix}_OPENAI_BASE_URL={deployment_cli['OPENAI_BASE_URL']}" in call
+        assert not any("FOUNDRY_PROJECT_ENDPOINT" in argument for argument in call)
         expected_url = f"https://{name}.example.azurecontainerapps.io"
         assert any(f"{prefix}_PUBLIC_URL={expected_url}" in update for update in calls)
         assert any(update[0] == "curl" and f"{expected_url}/healthz" in update for update in calls)
@@ -162,6 +159,8 @@ def test_deploys_both_agents_with_managed_identities(deployment_cli):
         assert call[call.index("--scope") + 1] == FOUNDRY_ID
         assert call[call.index("--role") + 1] == ROLE_ID
         assert call[call.index("--assignee-principal-type") + 1] == "ServicePrincipal"
+    account_lookup = next(call for call in calls if call[1:3] == ["resource", "show"])
+    assert account_lookup[account_lookup.index("--ids") + 1] == FOUNDRY_ID
     for call in calls:
         if call[0] == "az" and call[1] == "extension":
             assert "--subscription" not in call
@@ -184,7 +183,7 @@ def test_rerun_reuses_resources_and_roles(deployment_cli):
 
 
 @pytest.mark.parametrize("customer_override", [None, "", "https://customer.example/openai/v1"])
-def test_deploys_optional_model_endpoint(deployment_cli, customer_override):
+def test_deploys_model_endpoint_overrides(deployment_cli, customer_override):
     apim_url = "https://finops4ai.azure-api.net/finopsforai/openai/v1"
     deployment_cli["OPENAI_BASE_URL"] = apim_url
     if customer_override is not None:
@@ -195,7 +194,7 @@ def test_deploys_optional_model_endpoint(deployment_cli, customer_override):
     calls = commands(deployment_cli)
     for prefix, endpoint in (
         ("RISK", apim_url),
-        ("CUSTOMER", apim_url if customer_override is None else customer_override),
+        ("CUSTOMER", customer_override or apim_url),
     ):
         configured = [call for call in calls if f"{prefix}_MODEL_DEPLOYMENT=" in " ".join(call)]
         assert len(configured) == 2
@@ -204,12 +203,21 @@ def test_deploys_optional_model_endpoint(deployment_cli, customer_override):
             assert f"{prefix}_OPENAI_BASE_URL={endpoint}" in call
 
 
+def test_deploys_with_only_per_agent_endpoints(deployment_cli):
+    deployment_cli.pop("OPENAI_BASE_URL")
+    deployment_cli["RISK_OPENAI_BASE_URL"] = "https://risk.example/openai/v1"
+    deployment_cli["CUSTOMER_OPENAI_BASE_URL"] = "https://customer.example/openai/v1"
+    result = run_deployment(deployment_cli)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize(
     ("key", "value", "error"),
     [
         ("RISK_IMAGE", "", "Set RISK_IMAGE"),
         ("RISK_IMAGE", "private.example/agent:latest", "publicly pullable ghcr.io"),
-        ("FOUNDRY_PROJECT_ENDPOINT", "https://account.openai.azure.com", "Invalid Foundry"),
+        ("OPENAI_BASE_URL", "", "Set OPENAI_BASE_URL"),
+        ("OPENAI_BASE_URL", "http://account.openai.azure.com/openai/v1", "Invalid OpenAI"),
         ("FOUNDRY_RESOURCE_ID", f"{FOUNDRY_ID}/projects/demo", "not a project"),
         ("CUSTOMER_APP_NAME", "risk-agent", "App names must be different"),
         ("RISK_APP_NAME", "invalid'name", "Invalid resource name"),

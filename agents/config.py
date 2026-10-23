@@ -10,36 +10,21 @@ AgentKind = Literal["risk", "customer"]
 
 class Settings(BaseModel):
     kind: AgentKind
-    project_endpoint: str
+    openai_base_url: str
     model: str = Field(min_length=1)
     host: str = "0.0.0.0"
     port: int = Field(ge=1, le=65535)
     public_url: str
     auth_mode: Literal["default", "cli", "managed_identity"] = "default"
     managed_identity_client_id: str | None = None
-    openai_base_url: str | None = None
-    api_version: str | None = None
-    allow_preview: bool = False
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
     request_timeout: float = Field(default=180, gt=0)
     max_retries: int = Field(default=2, ge=0)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
-    @field_validator("project_endpoint")
-    @classmethod
-    def validate_endpoint(cls, value: str) -> str:
-        url = urlsplit(value)
-        if url.scheme != "https" or not url.netloc or "/api/projects/" not in url.path:
-            raise ValueError(
-                "Use a Foundry HTTPS project endpoint ending in /api/projects/<project>"
-            )
-        return value.rstrip("/")
-
     @field_validator("openai_base_url")
     @classmethod
-    def validate_openai_base_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def validate_openai_base_url(cls, value: str) -> str:
         url = urlsplit(value)
         if (
             url.scheme != "https"
@@ -70,9 +55,8 @@ class Settings(BaseModel):
         port = os.getenv(f"{prefix}_PORT", "8001" if kind == "risk" else "8002")
         values: dict[str, object] = {
             "kind": kind,
-            "project_endpoint": os.getenv(
-                f"{prefix}_FOUNDRY_PROJECT_ENDPOINT", os.getenv("FOUNDRY_PROJECT_ENDPOINT", "")
-            ),
+            "openai_base_url": os.getenv(f"{prefix}_OPENAI_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL", ""),
             "model": os.getenv(
                 f"{prefix}_MODEL_DEPLOYMENT", "gpt-5.6-sol" if kind == "risk" else "gpt-5.4-mini"
             ),
@@ -83,9 +67,6 @@ class Settings(BaseModel):
         for field in (
             "auth_mode",
             "managed_identity_client_id",
-            "openai_base_url",
-            "api_version",
-            "allow_preview",
             "reasoning_effort",
             "request_timeout",
             "max_retries",

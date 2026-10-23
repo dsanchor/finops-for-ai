@@ -11,7 +11,7 @@ Required environment variables:
   RESOURCE_GROUP             Container Apps resource group (created if needed)
   LOCATION                   Azure region for new resources
   FOUNDRY_RESOURCE_ID         Existing Foundry account resource ID (RBAC scope)
-  FOUNDRY_PROJECT_ENDPOINT    https://<account>.services.ai.azure.com/api/projects/<project>
+  OPENAI_BASE_URL            OpenAI v1 model endpoint (or set both per-agent overrides)
   RISK_IMAGE                 Public GHCR image for the risk agent
   CUSTOMER_IMAGE             Public GHCR image for the customer agent
 
@@ -21,7 +21,6 @@ Optional:
   CUSTOMER_APP_NAME          Default: customer-agent
   RISK_MODEL_DEPLOYMENT      Default: gpt-5.6-sol
   CUSTOMER_MODEL_DEPLOYMENT  Default: gpt-5.4-mini
-  OPENAI_BASE_URL             Optional OpenAI v1 model endpoint (e.g. APIM)
   RISK_OPENAI_BASE_URL        Overrides OPENAI_BASE_URL for risk
   CUSTOMER_OPENAI_BASE_URL    Overrides OPENAI_BASE_URL for customer
 
@@ -48,7 +47,6 @@ done
 : "${RESOURCE_GROUP:?Set RESOURCE_GROUP (see --help).}"
 : "${LOCATION:?Set LOCATION (see --help).}"
 : "${FOUNDRY_RESOURCE_ID:?Set FOUNDRY_RESOURCE_ID (see --help).}"
-: "${FOUNDRY_PROJECT_ENDPOINT:?Set FOUNDRY_PROJECT_ENDPOINT (see --help).}"
 : "${RISK_IMAGE:?Set RISK_IMAGE (see --help).}"
 : "${CUSTOMER_IMAGE:?Set CUSTOMER_IMAGE (see --help).}"
 
@@ -58,7 +56,10 @@ CUSTOMER_APP_NAME="${CUSTOMER_APP_NAME:-customer-agent}"
 RISK_MODEL_DEPLOYMENT="${RISK_MODEL_DEPLOYMENT:-gpt-5.6-sol}"
 CUSTOMER_MODEL_DEPLOYMENT="${CUSTOMER_MODEL_DEPLOYMENT:-gpt-5.4-mini}"
 FOUNDRY_RESOURCE_ID="${FOUNDRY_RESOURCE_ID%/}"
-FOUNDRY_PROJECT_ENDPOINT="${FOUNDRY_PROJECT_ENDPOINT%/}"
+RISK_OPENAI_BASE_URL="${RISK_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-}}"
+CUSTOMER_OPENAI_BASE_URL="${CUSTOMER_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-}}"
+: "${RISK_OPENAI_BASE_URL:?Set OPENAI_BASE_URL or RISK_OPENAI_BASE_URL (see --help).}"
+: "${CUSTOMER_OPENAI_BASE_URL:?Set OPENAI_BASE_URL or CUSTOMER_OPENAI_BASE_URL (see --help).}"
 FOUNDRY_USER_ROLE_ID="53ca6127-db72-4b80-b1b0-d745d6d5456d"
 
 for name in "$RISK_APP_NAME" "$CUSTOMER_APP_NAME" "$CONTAINER_APPS_ENVIRONMENT"; do
@@ -68,8 +69,10 @@ done
 [[ "$RISK_APP_NAME" != "$CUSTOMER_APP_NAME" ]] || die "App names must be different."
 [[ "$FOUNDRY_RESOURCE_ID" =~ ^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft.CognitiveServices/accounts/[^/]+$ ]] \
     || die "FOUNDRY_RESOURCE_ID must identify a Foundry account, not a project."
-[[ "$FOUNDRY_PROJECT_ENDPOINT" =~ ^https://[a-zA-Z0-9.-]+/api/projects/[a-zA-Z0-9._-]+$ ]] \
-    || die "Invalid Foundry project endpoint."
+for endpoint in "$RISK_OPENAI_BASE_URL" "$CUSTOMER_OPENAI_BASE_URL"; do
+    [[ "$endpoint" =~ ^https://[a-zA-Z0-9.-]+(:[0-9]+)?(/[^?#[:space:]]*)?$ ]] \
+        || die "Invalid OpenAI base URL: use an absolute HTTPS URL without query or fragment."
+done
 for image in "$RISK_IMAGE" "$CUSTOMER_IMAGE"; do
     [[ "$image" == ghcr.io/* && "$image" != *[[:space:]]* ]] \
         || die "Use a publicly pullable ghcr.io image: $image"
@@ -85,11 +88,10 @@ foundry() {
     az "$@" --subscription "$foundry_subscription" --only-show-errors
 }
 
-# Check the existing Foundry project before provisioning any resources.
+# Check the existing Foundry account used as the RBAC scope.
 azure account show --output none
 az extension show --name containerapp --only-show-errors --output none
-foundry resource show \
-    --ids "$FOUNDRY_RESOURCE_ID/projects/${FOUNDRY_PROJECT_ENDPOINT##*/}" --output none
+foundry resource show --ids "$FOUNDRY_RESOURCE_ID" --output none
 for provider in Microsoft.App Microsoft.OperationalInsights; do
     azure provider register --namespace "$provider" --wait --output none
 done
@@ -108,8 +110,6 @@ deploy_agent() {
     local name="$1" prefix="$2" port="$3" image="$4" model="$5" openai_base_url="$6"
     local existing_id existing_environment principal_id assignment_id fqdn url
     local -a settings=(
-        "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT"
-        "${prefix}_FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT"
         "AUTH_MODE=managed_identity"
         "${prefix}_AUTH_MODE=managed_identity"
         "MANAGED_IDENTITY_CLIENT_ID="
@@ -171,7 +171,7 @@ deploy_agent() {
 
 printf 'WARNING: Both agents will be publicly reachable without client authentication.\n' >&2
 deploy_agent "$RISK_APP_NAME" RISK 8001 "$RISK_IMAGE" "$RISK_MODEL_DEPLOYMENT" \
-    "${RISK_OPENAI_BASE_URL-${OPENAI_BASE_URL:-}}"
+    "$RISK_OPENAI_BASE_URL"
 deploy_agent "$CUSTOMER_APP_NAME" CUSTOMER 8002 "$CUSTOMER_IMAGE" "$CUSTOMER_MODEL_DEPLOYMENT" \
-    "${CUSTOMER_OPENAI_BASE_URL-${OPENAI_BASE_URL:-}}"
+    "$CUSTOMER_OPENAI_BASE_URL"
 printf 'Health checks passed. They do not verify Foundry inference or RBAC propagation.\n'
