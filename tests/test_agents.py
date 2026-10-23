@@ -117,6 +117,13 @@ async def live_agent(request):
                 await task
 
 
+@pytest.mark.parametrize("kind", ["risk", "customer"])
+def test_profiles_without_team(kind):
+    profile = PROFILES[kind]
+    assert not hasattr(profile, "team")
+    assert "equipo" not in profile.instructions.lower()
+
+
 async def test_real_http_streaming_and_usage(live_agent, caplog):
     url, model, config = live_agent
     caplog.set_level(logging.INFO, logger="agents.server")
@@ -125,6 +132,9 @@ async def test_real_http_streaming_and_usage(live_agent, caplog):
         assert health.json() == {"status": "ok", "agent": config.kind}
         card = (await http.get(url + "/.well-known/agent-card.json")).json()
         assert card["capabilities"]["streaming"]
+        profile = PROFILES[config.kind]
+        assert card["description"] == f"{profile.department}. {profile.description}"
+        assert card["skills"][0]["tags"] == [profile.department]
         client = await ClientFactory(
             ClientConfig(httpx_client=http, supported_protocol_bindings=["JSONRPC"])
         ).create_from_url(url)
@@ -145,6 +155,7 @@ async def test_real_http_streaming_and_usage(live_agent, caplog):
     assert len(usage) == 1
     assert usage[0]["model_deployment"] == config.model
     assert usage[0]["department"] == PROFILES[config.kind].department
+    assert "team" not in usage[0]
     assert usage[0]["usage"]["input_token_count"] == 123
     assert usage[0]["task_id"]
     assert "max_tokens" not in model.options[0]

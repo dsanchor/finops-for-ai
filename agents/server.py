@@ -53,7 +53,6 @@ class UsageExecutor(A2AExecutor):
                             "event": "model_usage",
                             "agent": self.settings.kind,
                             "department": profile.department,
-                            "team": profile.team,
                             "model_deployment": self.settings.model,
                             "task_id": updater.task_id,
                             "usage": content.usage_details,
@@ -106,7 +105,7 @@ def create_app(
     profile = PROFILES[settings.kind]
     card = AgentCard(
         name=profile.name,
-        description=f"{profile.department} / {profile.team}. {profile.description}",
+        description=f"{profile.department}. {profile.description}",
         version="1.0.0",
         default_input_modes=["text"],
         default_output_modes=["text"],
@@ -123,7 +122,7 @@ def create_app(
                 id=settings.kind,
                 name=profile.name,
                 description=profile.description,
-                tags=[profile.department, profile.team],
+                tags=[profile.department],
             )
         ],
     )

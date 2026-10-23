@@ -8,10 +8,10 @@ Microsoft Foundry). Los servicios no crean agentes remotos ni infraestructura de
 Azure; el [script de despliegue](./deployment/README.md) permite aprovisionar
 Azure Container Apps de forma explicita.
 
-| Servicio | Departamento / equipo ficticios | Despliegue por defecto | Carga sintetica por defecto |
+| Servicio | Departamento ficticio | Despliegue por defecto | Carga sintetica por defecto |
 | --- | --- | --- | --- |
-| Riesgos | CIB / Riesgos | `gpt-5.6-sol` | 3 solicitudes, concurrencia 1, documentos de 60 secciones |
-| Atencion al cliente | Retail / Canales digitales | `gpt-5.4-mini` | 100 solicitudes, concurrencia 8, preguntas breves |
+| Riesgos | CIB | `gpt-5.6-sol` | 3 solicitudes, concurrencia 1, documentos de 60 secciones |
+| Atencion al cliente | Retail | `gpt-5.4-mini` | 100 solicitudes, concurrencia 8, preguntas breves |
 
 Los nombres son **nombres de despliegue**, no una garantia de disponibilidad de esos
 modelos en Foundry. Deben existir en tu proyecto; cambia las variables si tienen
@@ -182,10 +182,17 @@ Los errores de transporte, tareas fallidas, rechazos y streams incompletos se
 notifican; si falla alguna solicitud, el proceso termina con codigo 1.
 
 Los servidores registran eventos JSON `model_usage` con agente, departamento,
-equipo, despliegue, task ID y los contadores de tokens devueltos por Foundry,
+despliegue, task ID y los contadores de tokens devueltos por Foundry,
 incluido cache/razonamiento si el proveedor los devuelve. No se registran
 deliberadamente prompts ni respuestas en esos eventos. Son contadores del modelo,
 no una factura; no incluyen necesariamente reintentos o solicitudes fallidas.
+
+El departamento del perfil es contexto ficticio y estatico del agente, no el
+departamento del usuario autenticado. No se incluye un campo `team`. Para las
+metricas de APIM, la configuracion prevista fija `agent` en la politica de la API
+y obtiene `department` y `user` del token validado de cada peticion. Esa politica
+y la propagacion de identidad no estan implementadas en este repositorio; los
+perfiles y logs locales no inicializan dimensiones de APIM.
 
 ## 4. Docker: una imagen por agente
 
