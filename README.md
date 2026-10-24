@@ -45,7 +45,7 @@ por agente. Un override por agente vacio usa la URL compartida. Cada agente debe
 tener una URL base, ya sea compartida o propia; si falta, falla al arrancar.
 No se usa `FOUNDRY_PROJECT_ENDPOINT` ni se instancia el SDK de proyectos.
 Las solicitudes Responses van a `<OPENAI_BASE_URL>/responses`, manteniendo
-streaming y la cabecera `X-Agent` recibida.
+streaming y las cabeceras `X-Agent`, `X-Department`, `X-Team` y `X-User` recibidas.
 OpenAI v1 no necesita un parametro `api-version`; las antiguas variables
 `API_VERSION` y `ALLOW_PREVIEW` ya no se utilizan.
 
@@ -124,18 +124,21 @@ Cada servicio publica:
 - `POST /`: A2A **1.0 JSON-RPC**, incluyendo streaming mediante SSE. Se usa el SDK
   oficial A2A y el adaptador `A2AExecutor` de Agent Framework, no un protocolo propio.
 
-  Ambos agentes propagan la cabecera HTTP `X-Agent` de cada solicitud A2A a las
-  llamadas al modelo mediante `extra_headers` del SDK. El valor se conserva por
+  Ambos agentes propagan las cabeceras HTTP `X-Agent`, `X-Department`, `X-Team`
+  y `X-User` de cada solicitud A2A a las llamadas al modelo mediante
+  `extra_headers` del SDK. Los valores se conservan por
   peticion, tambien en streaming y con solicitudes concurrentes; no se modifica
-  el cliente compartido ni se introduce en el prompt. Si no llega la cabecera, no
-  se envia ni se inventa un valor a partir del perfil. No se propagan otras
+  el cliente compartido ni se introducen en el prompt. Los nombres de cabecera
+  se reconocen sin distinguir mayusculas y minusculas. Si no llega alguna
+  cabecera, no se envia ni se inventa un valor a partir del perfil. No se propagan otras
   cabeceras entrantes, incluido `Authorization`: se mantiene Azure Identity para
   autenticar las llamadas a Foundry.
 
-  Configura APIM para sobrescribir `X-Agent` con el identificador del agente al
-  recibir la llamada A2A. Esta cabecera es metadato, no una prueba de identidad:
-  el agente no la autentica y un cliente con acceso directo puede falsificarla.
-  APIM solo podra usarla en las metricas del modelo si esas llamadas tambien
+  Configura APIM para sobrescribir `X-Agent` con el identificador del agente y
+  establecer `X-Department`, `X-Team` y `X-User` segun el contexto validado al
+  recibir la llamada A2A. Estas cabeceras son metadatos, no una prueba de identidad:
+  el agente no las autentica y un cliente con acceso directo puede falsificarlas.
+  APIM solo podra usarlas en las metricas del modelo si esas llamadas tambien
   pasan por su gateway; reenviarla no cambia el endpoint de Foundry.
 
 Si cambias puertos, dominio o proxy, configura la URL publica que puedan alcanzar

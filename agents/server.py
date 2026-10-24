@@ -36,12 +36,12 @@ logger = logging.getLogger(__name__)
 class UsageExecutor(A2AExecutor):
     def __init__(self, agent: Agent, settings: Settings, context: RequestContext):
         headers = Headers(context.call_context.state.get("headers", {}))
-        agent_header = headers.get("x-agent")
-        run_kwargs = (
-            {"client_kwargs": {"extra_headers": {"X-Agent": agent_header}}}
-            if agent_header is not None
-            else {}
-        )
+        model_headers = {
+            name: value
+            for name in ("X-Agent", "X-Department", "X-Team", "X-User")
+            if (value := headers.get(name)) is not None
+        }
+        run_kwargs = {"client_kwargs": {"extra_headers": model_headers}} if model_headers else {}
         super().__init__(agent, stream=True, run_kwargs=run_kwargs)
         self.settings = settings
 

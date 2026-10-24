@@ -202,13 +202,12 @@ async def test_concurrent_requests_are_isolated(live_agent):
     assert sorted(model.prompts) == [f"Consulta {i}" for i in range(8)]
 
 
-async def test_x_agent_headers_are_isolated_per_request(live_agent):
+async def test_model_headers_are_isolated_per_request(live_agent):
     url, model, _ = live_agent
 
-    async def send(index, agent_header):
+    async def send(index, model_headers):
         headers = {"Authorization": "Bearer inbound-only", "X-Unrelated": "not-forwarded"}
-        if agent_header is not None:
-            headers["x-AGENT"] = agent_header
+        headers.update({name.swapcase(): value for name, value in model_headers.items()})
         async with httpx.AsyncClient(timeout=10, headers=headers) as http:
             client = await ClientFactory(ClientConfig(httpx_client=http)).create_from_url(url)
             try:
@@ -216,13 +215,22 @@ async def test_x_agent_headers_are_isolated_per_request(live_agent):
                 assert await stream_request(client, prompt) == f"Respuesta: {prompt}"
             finally:
                 await client.close()
-        expected = {"X-Agent": agent_header} if agent_header is not None else {}
-        assert model.request_kwargs[prompt].get("extra_headers", {}) == expected
+        assert model.request_kwargs[prompt].get("extra_headers", {}) == model_headers
 
     await asyncio.gather(
-        *(send(index, f"onboarded-agent-{index}" if index % 2 else None) for index in range(8))
+        *(
+            send(
+                index,
+                {
+                    name: f"value-{index}-{name}"
+                    for bit, name in enumerate(("X-Agent", "X-Department", "X-Team", "X-User"))
+                    if index & (1 << bit)
+                },
+            )
+            for index in range(16)
+        )
     )
-    await send("after-concurrent-requests", None)
+    await send("after-concurrent-requests", {})
 
 
 class CollectingEventQueue(EventQueue):
@@ -264,8 +272,8 @@ def model_stream_response(model: str) -> httpx.Response:
 
 
 @pytest.mark.parametrize("kind", ["risk", "customer"])
-@pytest.mark.parametrize("agent_header", [None, "apim-onboarded-agent"])
-async def test_x_agent_reaches_model_http_request(kind, agent_header):
+@pytest.mark.parametrize("header_mask", range(16))
+async def test_forwarded_headers_reach_model_http_request(kind, header_mask):
     requests: list[httpx.Request] = []
 
     def respond(request):
@@ -273,9 +281,14 @@ async def test_x_agent_reaches_model_http_request(kind, agent_header):
         return model_stream_response(config.model)
 
     config = settings(kind)
+    header_names = ("X-Agent", "X-Department", "X-Team", "X-User")
+    model_headers = {
+        name: f"apim-value-{name}"
+        for bit, name in enumerate(header_names)
+        if header_mask & (1 << bit)
+    }
     incoming_headers = {"authorization": "Bearer inbound-only", "x-unrelated": "not-forwarded"}
-    if agent_header is not None:
-        incoming_headers["x-agent"] = agent_header
+    incoming_headers.update({name.lower(): value for name, value in model_headers.items()})
     context = RequestContext(
         call_context=ServerCallContext(state={"headers": incoming_headers}),
         request=SendMessageRequest(
@@ -298,7 +311,8 @@ async def test_x_agent_reaches_model_http_request(kind, agent_header):
         client = OpenAIChatClient(model=config.model, async_client=sdk_client)
         await UsageExecutor(build_agent(config, client), config, context).execute(context, queue)
     assert len(requests) == 1
-    assert requests[0].headers.get("x-agent") == agent_header
+    for name in header_names:
+        assert requests[0].headers.get(name) == model_headers.get(name)
     assert requests[0].headers["authorization"] == "Bearer test-model-credential"
     assert "x-unrelated" not in requests[0].headers
     body = json.loads(requests[0].content)
@@ -319,8 +333,14 @@ async def test_x_agent_reaches_model_http_request(kind, agent_header):
         "https://finops4ai.azure-api.net/finopsforai/openai/v1",
     ],
 )
-async def test_configured_model_endpoint_and_x_agent(kind, base_url, monkeypatch):
+async def test_configured_model_endpoint_and_headers(kind, base_url, monkeypatch):
     config = settings(kind, auth_mode="cli", openai_base_url=base_url, public_url="http://agent")
+    model_headers = {
+        "X-Agent": "apim-onboarded-agent",
+        "X-Department": "apim-department",
+        "X-Team": "apim-team",
+        "X-User": "apim-user",
+    }
     requests: list[httpx.Request] = []
 
     def respond(request):
@@ -359,7 +379,7 @@ async def test_configured_model_endpoint_and_x_agent(kind, base_url, monkeypatch
             app.router.lifespan_context(app),
             httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app),
-                headers={"X-Agent": "apim-onboarded-agent"},
+                headers=model_headers,
             ) as http,
         ):
             client = await ClientFactory(ClientConfig(httpx_client=http)).create_from_url(
@@ -371,7 +391,8 @@ async def test_configured_model_endpoint_and_x_agent(kind, base_url, monkeypatch
                 await client.close()
     assert len(requests) == 1
     assert str(requests[0].url) == f"{base_url}/responses"
-    assert requests[0].headers["x-agent"] == "apim-onboarded-agent"
+    for name, value in model_headers.items():
+        assert requests[0].headers[name] == value
     assert requests[0].headers["authorization"] == "Bearer test-entra-token"
     assert credential.scopes == [("https://ai.azure.com/.default",)]
     assert credential.closed
