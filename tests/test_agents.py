@@ -203,8 +203,9 @@ async def test_concurrent_requests_are_isolated(live_agent):
     assert sorted(model.prompts) == [f"Consulta {i}" for i in range(8)]
 
 
-async def test_model_headers_are_isolated_per_request(live_agent):
-    url, model, _ = live_agent
+async def test_model_headers_are_isolated_per_request(live_agent, caplog):
+    url, model, config = live_agent
+    caplog.set_level(logging.INFO, logger="agents.server")
 
     async def send(index, model_headers):
         headers = {"Authorization": "Bearer inbound-only", "X-Unrelated": "not-forwarded"}
@@ -232,6 +233,18 @@ async def test_model_headers_are_isolated_per_request(live_agent):
         )
     )
     await send("after-concurrent-requests", {})
+    records = [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.name == "agents.server" and '"request_headers"' in record.message
+    ]
+    assert len(records) == 17
+    assert all(record["agent"] == config.kind for record in records)
+    assert sorted(json.dumps(record["headers"], sort_keys=True) for record in records) == sorted(
+        json.dumps(kwargs.get("extra_headers", {}), sort_keys=True)
+        for kwargs in model.request_kwargs.values()
+    )
+    assert records[-1]["headers"] == {}
 
 
 class CollectingEventQueue(EventQueue):

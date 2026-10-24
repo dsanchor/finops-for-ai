@@ -134,6 +134,14 @@ Cada servicio publica:
   cabeceras entrantes, incluido `Authorization`: se mantiene Azure Identity para
   autenticar las llamadas a Foundry.
 
+  Al iniciar cada ejecucion A2A, ambos agentes emiten un log JSON de nivel `INFO`
+  con `event=request_headers`, `agent` (el tipo de agente local) y `headers`
+  con los valores recibidos de `X-Agent`, `X-Department`, `X-Team` y `X-User`.
+  Las cabeceras ausentes se omiten; si no llega ninguna, `headers` es `{}`.
+  No se registran otras cabeceras, tokens de autenticacion ni prompts en este
+  evento. `X-User` puede contener un correo: protege el acceso y la retencion de
+  estos logs. Configura `LOG_LEVEL=INFO` (o el override del agente) para verlos.
+
   Configura APIM para sobrescribir `X-Agent` con el identificador del agente y
   establecer `X-Department`, `X-Team` y `X-User` segun el contexto validado al
   recibir la llamada A2A. Estas cabeceras son metadatos, no una prueba de identidad:

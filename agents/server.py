@@ -41,6 +41,15 @@ class UsageExecutor(A2AExecutor):
             for name in ("X-Agent", "X-Department", "X-Team", "X-User")
             if (value := headers.get(name)) is not None
         }
+        logger.info(
+            json.dumps(
+                {
+                    "event": "request_headers",
+                    "agent": settings.kind,
+                    "headers": model_headers,
+                }
+            )
+        )
         run_kwargs = {"client_kwargs": {"extra_headers": model_headers}} if model_headers else {}
         super().__init__(agent, stream=True, run_kwargs=run_kwargs)
         self.settings = settings
