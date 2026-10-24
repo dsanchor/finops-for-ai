@@ -13,12 +13,13 @@ from uuid import uuid4
 
 import httpx
 from a2a.client import A2ACardResolver, ClientConfig, ClientFactory
-from a2a.client.client import Client
+from a2a.client.client import Client, ClientCallContext
 from a2a.client.errors import A2AClientError
 from a2a.types import Message, Part, Role, SendMessageRequest, TaskState
 from dotenv import load_dotenv
 
 from agents.config import AgentKind
+from clients.identities import load_identities
 from clients.workloads import random_prompt, with_documents
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,11 @@ class Result:
 
 
 async def stream_request(
-    client: Client, prompt: str, on_text: Callable[[str], None] | None = None
+    client: Client,
+    prompt: str,
+    on_text: Callable[[str], None] | None = None,
+    *,
+    headers: dict[str, str] | None = None,
 ) -> str:
     request = SendMessageRequest(
         message=Message(
@@ -50,7 +55,8 @@ async def stream_request(
     )
     artifacts: dict[str, str] = {}
     completed = False
-    async for event in client.send_message(request):
+    context = ClientCallContext(service_parameters=headers) if headers is not None else None
+    async for event in client.send_message(request, context=context):
         event_type = event.WhichOneof("payload")
         if event_type == "artifact_update":
             update = event.artifact_update
@@ -95,6 +101,18 @@ async def stream_request(
 
 
 async def run(args: argparse.Namespace, kind: AgentKind) -> int:
+    identities = load_identities(args.identities_file) if args.identities_file else []
+    identity_rng = random.Random(args.seed)
+    request_headers = [
+        (
+            identity_rng.choice(identities)
+            if args.identity_mode == "random"
+            else identities[index % len(identities)]
+        ).headers()
+        if identities
+        else None
+        for index in range(args.requests)
+    ]
     rng = random.Random(args.seed)
     prompts = [
         with_documents(
@@ -134,7 +152,9 @@ async def run(args: argparse.Namespace, kind: AgentKind) -> int:
             text = ""
             try:
                 async with asyncio.timeout(args.timeout):
-                    text = await stream_request(client, prompt, on_text)
+                    text = await stream_request(
+                        client, prompt, on_text, headers=request_headers[index - 1]
+                    )
             except (A2AClientError, httpx.HTTPError, TimeoutError, RuntimeError) as exc:
                 logger.error("Request %s failed: %s", index, exc)
                 error = f"{type(exc).__name__}: {exc}"
@@ -233,6 +253,15 @@ def main(kind: AgentKind) -> None:
     parser.add_argument("--requests", type=positive_int)
     parser.add_argument("--concurrency", type=positive_int)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--identities-file", type=Path, help="CSV without header: department,team,user"
+    )
+    parser.add_argument(
+        "--identity-mode",
+        choices=("random", "sequence"),
+        default="sequence",
+        help="Select a CSV row per request (default: sequence, cycles at end)",
+    )
     parser.add_argument("--document-sections", type=positive_int, default=60)
     parser.add_argument("--document", type=Path, action="append", default=[])
     parser.add_argument("--timeout", type=positive_float, default=240)
@@ -241,6 +270,8 @@ def main(kind: AgentKind) -> None:
         "--output", type=Path, help="Existing parent directory; JSONL inputs, outputs and metrics"
     )
     args = parser.parse_args()
+    if args.identity_mode == "random" and args.identities_file is None:
+        parser.error("--identity-mode random requires --identities-file")
     if args.requests is None:
         args.requests = (3 if kind == "risk" else 100) if args.random else 1
     args.concurrency = args.concurrency or (1 if kind == "risk" else 8)

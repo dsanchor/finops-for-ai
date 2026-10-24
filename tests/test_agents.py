@@ -49,6 +49,7 @@ from agents.config import Settings
 from agents.profiles import PROFILES
 from agents.server import UsageExecutor, build_agent, create_app, credential_for
 from clients.common import run, stream_request
+from clients.identities import load_identities
 from clients.workloads import random_prompt, with_documents
 
 
@@ -414,6 +415,8 @@ async def test_random_load_and_jsonl(live_agent, tmp_path, capsys):
     output = tmp_path / "results.jsonl"
     args = Namespace(
         seed=7,
+        identities_file=None,
+        identity_mode="sequence",
         document_sections=60,
         random=True,
         prompt=None,
@@ -426,6 +429,7 @@ async def test_random_load_and_jsonl(live_agent, tmp_path, capsys):
         output=output,
     )
     assert await run(args, config.kind) == 0
+    assert all(not kwargs.get("extra_headers") for kwargs in model.request_kwargs.values())
     records = [json.loads(line) for line in output.read_text().splitlines()]
     assert len(records) == 4
     assert all(r["status"] == "completed" for r in records)
@@ -450,6 +454,50 @@ async def test_random_load_and_jsonl(live_agent, tmp_path, capsys):
     assert '"failures": 0' in captured.err
 
 
+@pytest.mark.parametrize("identity_mode", ["random", "sequence"])
+@pytest.mark.parametrize("seed", [42, 43])
+async def test_client_csv_headers_reach_model(
+    live_agent, tmp_path, monkeypatch, identity_mode, seed
+):
+    url, model, config = live_agent
+    path = tmp_path / "identities.csv"
+    path.write_text(
+        "finance,globalrisk,user1\nretail,cards,user2\ntechnology,platform,user3\n",
+        encoding="utf-8",
+    )
+    identities = load_identities(path)
+    rng = random.Random(seed)
+    expected = [
+        (rng.choice(identities) if identity_mode == "random" else identities[index % 3]).headers()
+        for index in range(8)
+    ]
+    args = Namespace(
+        seed=seed,
+        identities_file=path,
+        identity_mode=identity_mode,
+        document_sections=1,
+        random=True,
+        prompt=None,
+        document=[],
+        requests=8,
+        concurrency=4,
+        interval=0,
+        timeout=10,
+        url=url,
+        output=None,
+    )
+    for _ in range(2):
+        prompts = iter(f"CSV request {index}" for index in range(8))
+        monkeypatch.setattr(
+            "clients.common.random_prompt", lambda *args, prompts=prompts: next(prompts)
+        )
+        assert await run(args, config.kind) == 0
+        assert [
+            model.request_kwargs[f"CSV request {index}"]["extra_headers"] for index in range(8)
+        ] == expected
+        assert all("X-Agent" not in headers for headers in expected)
+
+
 @pytest.mark.parametrize("card_url_mode", ["missing", "empty", "custom"])
 async def test_single_request_prints_input_and_streamed_output(
     live_agent, tmp_path, capsys, monkeypatch, card_url_mode
@@ -469,6 +517,8 @@ async def test_single_request_prints_input_and_streamed_output(
     output = tmp_path / "single.jsonl"
     args = Namespace(
         seed=42,
+        identities_file=None,
+        identity_mode="sequence",
         document_sections=60,
         random=False,
         prompt="Analiza esta consulta",
@@ -495,6 +545,8 @@ async def test_configured_card_url_failure_does_not_fall_back(live_agent, monkey
     monkeypatch.setenv(f"{config.kind.upper()}_AGENT_CARD_URL", url + "/missing-card.json")
     args = Namespace(
         seed=42,
+        identities_file=None,
+        identity_mode="sequence",
         document_sections=60,
         random=False,
         prompt="Hola",
@@ -516,6 +568,8 @@ async def test_failed_load_returns_nonzero(live_agent, tmp_path, capsys):
     output = tmp_path / "failed-load.jsonl"
     args = Namespace(
         seed=42,
+        identities_file=None,
+        identity_mode="sequence",
         document_sections=60,
         random=False,
         prompt="FAIL",
@@ -547,7 +601,7 @@ async def test_partial_output_is_kept_on_failure(monkeypatch, tmp_path, capsys):
     async def connect(*args, **kwargs):
         return FakeClient()
 
-    async def fail_after_text(client, prompt, on_text):
+    async def fail_after_text(client, prompt, on_text, *, headers=None):
         assert "[customer #1] Peticion:\nConsulta" in capsys.readouterr().out
         on_text("Respuesta parcial")
         raise RuntimeError("Stream interrupted")
@@ -557,6 +611,8 @@ async def test_partial_output_is_kept_on_failure(monkeypatch, tmp_path, capsys):
     output = tmp_path / "failed.jsonl"
     args = Namespace(
         seed=42,
+        identities_file=None,
+        identity_mode="sequence",
         document_sections=60,
         random=False,
         prompt="Consulta",
@@ -582,6 +638,8 @@ async def test_request_timeout_is_reported(live_agent, capsys):
     url, _, config = live_agent
     args = Namespace(
         seed=42,
+        identities_file=None,
+        identity_mode="sequence",
         document_sections=60,
         random=False,
         prompt="Hola",
@@ -711,7 +769,7 @@ class ScriptedClient:
     def __init__(self, events):
         self.events = events
 
-    async def send_message(self, request):
+    async def send_message(self, request, *, context=None):
         for event in self.events:
             yield event
 

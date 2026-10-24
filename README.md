@@ -211,6 +211,45 @@ limite global de peticiones/segundo). `--seed` reproduce las entradas, no las
 respuestas del modelo. Las opciones deben ser positivas cuando corresponda.
 El directorio de `--output` debe existir; cada ejecucion sobrescribe ese archivo.
 
+### Cabeceras por usuario desde CSV
+
+Ambos clientes admiten `--identities-file` con un CSV UTF-8 **sin cabecera**,
+con tres columnas por fila en este orden: `department,team,user`. Por ejemplo:
+
+```csv
+finance,globalrisk,david@microsoft.com
+retail,cards,michael@microsoft.com
+```
+
+El fichero [clients/data/identities.csv](./clients/data/identities.csv) contiene
+24 usuarios sinteticos: 4 departamentos, 2 equipos por departamento y 3 usuarios
+por equipo.
+
+```bash
+uv run python -m clients.risk --random --requests 24 \
+  --identities-file clients/data/identities.csv --identity-mode sequence
+
+uv run python -m clients.customer --random --requests 100 --concurrency 8 \
+  --identities-file clients/data/identities.csv --identity-mode random --seed 42
+```
+
+`--identity-mode sequence` (por defecto) recorre las filas en orden y vuelve a
+la primera al agotar el fichero. `random` elige una fila completa al azar por
+peticion, con reemplazo: puede repetir usuarios. `--seed` reproduce la seleccion,
+independientemente de la generacion aleatoria de prompts. El modo de identidad
+es independiente de `--random` y tambien funciona con `--prompt`.
+Con concurrencia, la asignacion sigue el numero de peticion; el orden de llegada
+o finalizacion puede variar.
+
+Cada peticion envia `X-Department`, `X-Team` y `X-User` de la misma fila, sin
+modificar el cliente HTTP compartido. **El cliente no envia `X-Agent`**: APIM
+debe introducirlo al llamar al agente. Sin `--identities-file` no se envian
+estas tres cabeceras y se mantiene el comportamiento anterior.
+El fichero debe contener al menos una fila; los campos vacios, filas con un
+numero de columnas distinto de tres y valores no ASCII imprimibles se rechazan
+antes de enviar peticiones. Se eliminan espacios al principio y final de cada
+campo. Los errores de lectura o formato terminan el proceso con codigo 1.
+
 En todas las modalidades se imprime un bloque **Peticion** con el mensaje
 completo (incluidos los documentos) **antes de enviarlo**, y despues un bloque
 **Respuesta** con el texto recibido. Ambos incluyen agente e identificador.
@@ -241,8 +280,10 @@ El departamento del perfil es contexto ficticio y estatico del agente, no el
 departamento del usuario autenticado. No se incluye un campo `team`. Para las
 metricas de APIM, la configuracion prevista fija `agent` en la politica de la API
 y obtiene `department` y `user` del token validado de cada peticion. Esa politica
-y la propagacion de identidad no estan implementadas en este repositorio; los
-perfiles y logs locales no inicializan dimensiones de APIM.
+no esta implementada en este repositorio. Las cabeceras del CSV permiten simular
+estas dimensiones, pero no autentican usuarios: en produccion APIM debe
+validarlas o sobrescribirlas con el contexto autenticado. Los perfiles y logs
+locales no inicializan dimensiones de APIM.
 
 ## 4. Docker: una imagen por agente
 
