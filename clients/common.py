@@ -101,6 +101,10 @@ async def stream_request(
 
 
 async def run(args: argparse.Namespace, kind: AgentKind) -> int:
+    card_url_variable = f"{kind.upper()}_AGENT_CARD_URL"
+    card_url = os.getenv(card_url_variable, "").strip()
+    if not card_url:
+        raise ValueError(f"{card_url_variable} must contain the full Agent Card URL")
     identities = load_identities(args.identities_file) if args.identities_file else []
     identity_rng = random.Random(args.seed)
     request_headers = [
@@ -191,12 +195,8 @@ async def run(args: argparse.Namespace, kind: AgentKind) -> int:
                     streaming=True, httpx_client=http, supported_protocol_bindings=["JSONRPC"]
                 )
             )
-            card_url = os.getenv(f"{kind.upper()}_AGENT_CARD_URL", "").strip()
-            if card_url:
-                card = await A2ACardResolver(http, card_url).get_agent_card(relative_card_path="/")
-                client = factory.create(card)
-            else:
-                client = await factory.create_from_url(args.url)
+            card = await A2ACardResolver(http, card_url).get_agent_card(relative_card_path="/")
+            client = factory.create(card)
             try:
                 await asyncio.gather(*(one(i + 1, p, client) for i, p in enumerate(prompts)))
             finally:
@@ -238,15 +238,7 @@ def positive_float(value: str) -> float:
 
 def main(kind: AgentKind) -> None:
     load_dotenv()
-    prefix = kind.upper()
     parser = argparse.ArgumentParser(description=f"Streaming A2A client: {kind}")
-    parser.add_argument(
-        "--url",
-        default=os.getenv(
-            f"{prefix}_AGENT_URL",
-            "http://localhost:8001" if kind == "risk" else "http://localhost:8002",
-        ),
-    )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--prompt", help="Single prompt; response is printed as it streams")
     source.add_argument("--random", action="store_true", help="Generate synthetic load (billable)")

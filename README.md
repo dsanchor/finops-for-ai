@@ -87,8 +87,7 @@ archivo al arrancar. `.env` y variantes quedan excluidos de Git y del contexto D
 | `RISK_PORT`, `CUSTOMER_PORT` | 8001 / 8002 |
 | `RISK_PUBLIC_URL`, `CUSTOMER_PUBLIC_URL` | URL anunciada en la Agent Card, sin barra final |
 | `RISK_REASONING_EFFORT`, `CUSTOMER_REASONING_EFFORT` | Opcionales; usa solo valores admitidos por tu despliegue |
-| `RISK_AGENT_URL`, `CUSTOMER_AGENT_URL` | URL de descubrimiento usada por los clientes |
-| `RISK_AGENT_CARD_URL`, `CUSTOMER_AGENT_CARD_URL` | URL completa opcional de la Agent Card; sustituye el descubrimiento por defecto |
+| `RISK_AGENT_CARD_URL`, `CUSTOMER_AGENT_CARD_URL` | URL completa obligatoria de la Agent Card para cada cliente |
 
 `AUTH_MODE`, `MANAGED_IDENTITY_CLIENT_ID`,
 `REQUEST_TIMEOUT`, `MAX_RETRIES` y `LOG_LEVEL` admiten prefijos `RISK_` y
@@ -163,18 +162,17 @@ Usa solo datos sinteticos en esta demostracion.
 
 ## 3. Clientes Python A2A streaming
 
-Los clientes cargan `.env` y respetan las variables exportadas. Si se configura
-`RISK_AGENT_CARD_URL` o `CUSTOMER_AGENT_CARD_URL`, el cliente correspondiente
-descarga la Agent Card directamente desde esa URL completa, por ejemplo
-`https://<apim>/customer-support/agent-card.json`. Si no esta definida o esta
-vacia, conserva el descubrimiento en
-`<RISK_AGENT_URL o CUSTOMER_AGENT_URL>/.well-known/agent-card.json`
-(o la URL base indicada mediante `--url`).
-Una URL de card configurada tiene prioridad tambien sobre `--url` para el
-descubrimiento; si falla, el cliente informa del error sin intentar otra ruta.
-Las llamadas A2A usan la URL JSON-RPC anunciada en la card: configura
-`RISK_PUBLIC_URL` / `CUSTOMER_PUBLIC_URL` con la direccion que deba alcanzar el
-cliente, incluida la ruta de APIM cuando corresponda.
+Los clientes cargan `.env` y respetan las variables exportadas. Cada cliente
+requiere su URL completa de Agent Card en `RISK_AGENT_CARD_URL` o
+`CUSTOMER_AGENT_CARD_URL`, por ejemplo
+`http://localhost:8001/.well-known/agent-card.json` o
+`https://<apim>/risk-discovery`. Si no esta definida o esta vacia, el cliente
+termina con un error antes de enviar solicitudes. Si falla la descarga, informa
+del error sin intentar otra ruta. No se admiten `--url` ni las antiguas
+variables `RISK_AGENT_URL` / `CUSTOMER_AGENT_URL`.
+Las llamadas A2A usan la URL JSON-RPC anunciada en `supportedInterfaces` de la
+card, no su URL de descarga. Con APIM, la card expuesta por el gateway debe
+anunciar el runtime de APIM.
 
 ### Solicitudes individuales
 
@@ -213,7 +211,7 @@ Los documentos de Riesgos contienen 60 unidades sinteticas con cifras variables,
 escenarios y limitaciones (mas de 30.000 caracteres); las consultas de Atencion
 son cortas (menos de 150). No se rellenan prompts con documentos de clientes.
 
-Otros parametros: `--url`, `--timeout` (240 segundos por solicitud A2A completa),
+Otros parametros: `--timeout` (240 segundos por solicitud A2A completa),
 `--interval` (pausa positiva antes de cada solicitud de cada worker, **no** un
 limite global de peticiones/segundo). `--seed` reproduce las entradas, no las
 respuestas del modelo. Las opciones deben ser positivas cuando corresponda.

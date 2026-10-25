@@ -13,7 +13,7 @@ import httpx
 import pytest
 import pytest_asyncio
 import uvicorn
-from a2a.client import ClientConfig, ClientFactory
+from a2a.client import A2ACardResolver, ClientConfig, ClientFactory
 from a2a.client.errors import A2AClientError
 from a2a.server.agent_execution import RequestContext
 from a2a.server.context import ServerCallContext
@@ -48,7 +48,7 @@ from starlette.routing import Route
 from agents.config import Settings
 from agents.profiles import PROFILES
 from agents.server import UsageExecutor, build_agent, create_app, credential_for
-from clients.common import run, stream_request
+from clients.common import main, run, stream_request
 from clients.identities import load_identities
 from clients.workloads import random_prompt, with_documents
 
@@ -116,6 +116,9 @@ async def live_agent(request, monkeypatch):
         port = sock.getsockname()[1]
         url = f"http://127.0.0.1:{port}"
         config = settings(request.param, public_url=url)
+        monkeypatch.setenv(
+            f"{config.kind.upper()}_AGENT_CARD_URL", url + "/.well-known/agent-card.json"
+        )
         app = create_app(
             config,
             executor_factory=lambda context: UsageExecutor(
@@ -438,7 +441,6 @@ async def test_random_load_and_jsonl(live_agent, tmp_path, capsys):
         concurrency=2,
         interval=0,
         timeout=10,
-        url=url,
         output=output,
     )
     assert await run(args, config.kind) == 0
@@ -496,7 +498,6 @@ async def test_client_csv_headers_reach_model(
         concurrency=4,
         interval=0,
         timeout=10,
-        url=url,
         output=None,
     )
     for _ in range(2):
@@ -511,16 +512,14 @@ async def test_client_csv_headers_reach_model(
         assert all("X-Agent" not in headers for headers in expected)
 
 
-@pytest.mark.parametrize("card_url_mode", ["missing", "empty", "custom"])
+@pytest.mark.parametrize("card_url_mode", ["well-known", "custom"])
 async def test_single_request_prints_input_and_streamed_output(
     live_agent, tmp_path, capsys, monkeypatch, card_url_mode
 ):
     url, _, config = live_agent
     other_kind = "customer" if config.kind == "risk" else "risk"
     monkeypatch.setenv(f"{other_kind.upper()}_AGENT_CARD_URL", url + "/wrong-agent-card")
-    if card_url_mode == "empty":
-        monkeypatch.setenv(f"{config.kind.upper()}_AGENT_CARD_URL", "")
-    elif card_url_mode == "custom":
+    if card_url_mode == "custom":
         monkeypatch.setenv(
             f"{config.kind.upper()}_AGENT_CARD_URL",
             url + "/gateway/agent-card.json?source=apim",
@@ -540,7 +539,6 @@ async def test_single_request_prints_input_and_streamed_output(
         concurrency=1,
         interval=0,
         timeout=10,
-        url=url + "/not-the-discovery-path" if card_url_mode == "custom" else url,
         output=output,
     )
     assert await run(args, config.kind) == 0
@@ -568,12 +566,46 @@ async def test_configured_card_url_failure_does_not_fall_back(live_agent, monkey
         concurrency=1,
         interval=0,
         timeout=10,
-        url=url,
         output=None,
     )
     with pytest.raises(A2AClientError, match="404"):
         await run(args, config.kind)
     assert model.prompts == []
+
+
+@pytest.mark.parametrize("card_url", [None, "", "   "])
+async def test_card_url_is_required_without_legacy_discovery(live_agent, monkeypatch, card_url):
+    url, model, config = live_agent
+    variable = f"{config.kind.upper()}_AGENT_CARD_URL"
+    monkeypatch.setenv(f"{config.kind.upper()}_AGENT_URL", url)
+    other_kind = "customer" if config.kind == "risk" else "risk"
+    monkeypatch.setenv(f"{other_kind.upper()}_AGENT_CARD_URL", url + "/gateway/agent-card.json")
+    if card_url is None:
+        monkeypatch.delenv(variable)
+    else:
+        monkeypatch.setenv(variable, card_url)
+    with pytest.raises(ValueError, match=f"{variable} must contain the full Agent Card URL"):
+        await run(Namespace(), config.kind)
+    assert model.prompts == []
+
+
+@pytest.mark.parametrize("kind", ["risk", "customer"])
+def test_client_reports_missing_card_url(kind, monkeypatch, caplog):
+    monkeypatch.setattr("clients.common.load_dotenv", lambda: None)
+    monkeypatch.delenv(f"{kind.upper()}_AGENT_CARD_URL", raising=False)
+    monkeypatch.setattr("sys.argv", ["client", "--prompt", "Hola"])
+    with pytest.raises(SystemExit) as exc:
+        main(kind)
+    assert exc.value.code == 1
+    assert f"{kind.upper()}_AGENT_CARD_URL must contain the full Agent Card URL" in caplog.text
+
+
+def test_client_rejects_legacy_url_option(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["client", "--prompt", "Hola", "--url", "http://localhost"])
+    with pytest.raises(SystemExit) as exc:
+        main("risk")
+    assert exc.value.code == 2
+    assert "unrecognized arguments: --url" in capsys.readouterr().err
 
 
 async def test_failed_load_returns_nonzero(live_agent, tmp_path, capsys):
@@ -591,7 +623,6 @@ async def test_failed_load_returns_nonzero(live_agent, tmp_path, capsys):
         concurrency=1,
         interval=0,
         timeout=10,
-        url=url,
         output=output,
     )
     assert await run(args, config.kind) == 1
@@ -611,7 +642,10 @@ async def test_partial_output_is_kept_on_failure(monkeypatch, tmp_path, capsys):
         async def close(self):
             pass
 
-    async def connect(*args, **kwargs):
+    async def get_card(*args, **kwargs):
+        return object()
+
+    def connect(*args, **kwargs):
         return FakeClient()
 
     async def fail_after_text(client, prompt, on_text, *, headers=None):
@@ -619,7 +653,9 @@ async def test_partial_output_is_kept_on_failure(monkeypatch, tmp_path, capsys):
         on_text("Respuesta parcial")
         raise RuntimeError("Stream interrupted")
 
-    monkeypatch.setattr(ClientFactory, "create_from_url", connect)
+    monkeypatch.setenv("CUSTOMER_AGENT_CARD_URL", "http://localhost/agent-card.json")
+    monkeypatch.setattr(A2ACardResolver, "get_agent_card", get_card)
+    monkeypatch.setattr(ClientFactory, "create", connect)
     monkeypatch.setattr("clients.common.stream_request", fail_after_text)
     output = tmp_path / "failed.jsonl"
     args = Namespace(
@@ -634,7 +670,6 @@ async def test_partial_output_is_kept_on_failure(monkeypatch, tmp_path, capsys):
         concurrency=1,
         interval=0,
         timeout=10,
-        url="http://localhost",
         output=output,
     )
     assert await run(args, "customer") == 1
@@ -661,7 +696,6 @@ async def test_request_timeout_is_reported(live_agent, capsys):
         concurrency=1,
         interval=0,
         timeout=0.05,
-        url=url,
         output=None,
     )
     assert await run(args, config.kind) == 1

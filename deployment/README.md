@@ -88,9 +88,11 @@ check correcto no confirma que la identidad pueda consumir el modelo.
 Puedes comprobar A2A y Foundry con una solicitud real (genera consumo):
 
 ```bash
-uv run python -m clients.risk --url "https://<risk-fqdn>" \
+RISK_AGENT_CARD_URL="https://<risk-fqdn>/.well-known/agent-card.json" \
+  uv run python -m clients.risk \
   --prompt "Analiza los riesgos de una empresa ficticia"
-uv run python -m clients.customer --url "https://<customer-fqdn>" \
+CUSTOMER_AGENT_CARD_URL="https://<customer-fqdn>/.well-known/agent-card.json" \
+  uv run python -m clients.customer \
   --prompt "He perdido mi tarjeta, que pasos debo seguir?"
 ```
 
