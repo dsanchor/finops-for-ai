@@ -38,7 +38,14 @@ class UsageExecutor(A2AExecutor):
         headers = Headers(context.call_context.state.get("headers", {}))
         model_headers = {
             name: value
-            for name in ("X-Agent", "X-Department", "X-Team", "X-User")
+            for name in (
+                "X-Agent",
+                "X-Department",
+                "X-Team",
+                "X-User",
+                "X-Product-Id",
+                "X-Subscription-Id",
+            )
             if (value := headers.get(name)) is not None
         }
         logger.info(
@@ -50,8 +57,6 @@ class UsageExecutor(A2AExecutor):
                 }
             )
         )
-        if (subscription_key := headers.get("Ocp-Apim-Subscription-Key")) is not None:
-            model_headers["Ocp-Apim-Subscription-Key"] = subscription_key
         run_kwargs = {"client_kwargs": {"extra_headers": model_headers}} if model_headers else {}
         super().__init__(agent, stream=True, run_kwargs=run_kwargs)
         self.settings = settings

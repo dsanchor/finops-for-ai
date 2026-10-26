@@ -211,10 +211,11 @@ La clave se envia como `Ocp-Apim-Subscription-Key` tanto al runtime, por
 peticion, como a la descarga de la card usando la identidad de la primera
 peticion. Los productos deben contener las APIs necesarias y estas deben
 exigir subscription key para que se aplique esa proteccion.
-Los agentes propagan tambien la misma clave al endpoint del modelo configurado.
-Si ese endpoint es otra API de APIM con subscription obligatoria, incluye esa
-API en el producto correspondiente. Las llamadas A2A y al modelo son peticiones
-distintas y pueden consumir cada una los contadores del producto.
+Los agentes no propagan `Ocp-Apim-Subscription-Key` al endpoint del modelo.
+Propagan `X-Product-Id` y `X-Subscription-Id` si APIM las establece antes de
+llamar al agente. Estos IDs son metadatos, no credenciales ni una subscription
+validada por el gateway del modelo. Si esa API exige una clave, necesita una
+configuracion de autenticacion propia; no recibe la clave del cliente A2A.
 
 Estos usuarios pertenecen a APIM, no a Microsoft Entra ID. El script no crea
 passwords conocidos, configura proveedores de identidad, envia invitaciones

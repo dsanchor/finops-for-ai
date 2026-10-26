@@ -45,8 +45,8 @@ por agente. Un override por agente vacio usa la URL compartida. Cada agente debe
 tener una URL base, ya sea compartida o propia; si falta, falla al arrancar.
 No se usa `FOUNDRY_PROJECT_ENDPOINT` ni se instancia el SDK de proyectos.
 Las solicitudes Responses van a `<OPENAI_BASE_URL>/responses`, manteniendo
-streaming y las cabeceras `X-Agent`, `X-Department`, `X-Team`, `X-User` y
-`Ocp-Apim-Subscription-Key` recibidas.
+streaming y las cabeceras `X-Agent`, `X-Department`, `X-Team`, `X-User`,
+`X-Product-Id` y `X-Subscription-Id` recibidas.
 OpenAI v1 no necesita un parametro `api-version`; las antiguas variables
 `API_VERSION` y `ALLOW_PREVIEW` ya no se utilizan.
 
@@ -54,11 +54,11 @@ La autenticacion usa Azure Identity y un proveedor de tokens Entra ID, con scope
 `https://ai.azure.com/.default`; cambiar la URL no cambia la audiencia del token.
 APIM debe aceptar y validar esa audiencia y configurar la autenticacion hacia
 Foundry. No se anaden API keys del modelo ni se reenvia el token del cliente A2A.
-Si la peticion A2A incluye `Ocp-Apim-Subscription-Key`, el agente propaga esa misma
-clave al endpoint de modelo configurado, sin registrarla en logs. Si el APIM
-del modelo exige subscription key, esa subscription debe autorizar tambien la
-API del modelo; no se intercambia por otra clave. Una audiencia Entra distinta
-requiere un cambio adicional.
+La cabecera `Ocp-Apim-Subscription-Key` recibida no se propaga al modelo ni se
+registra en logs. En su lugar, APIM puede establecer `X-Product-Id` y
+`X-Subscription-Id` como metadatos antes de llamar al agente. Si el APIM del
+modelo exige una subscription key o una audiencia Entra distinta, se requiere
+una configuracion de autenticacion adicional: los IDs no sustituyen credenciales.
 
 La autenticacion ante Foundry usa **Azure Identity**, sin API keys del modelo:
 
@@ -127,21 +127,22 @@ Cada servicio publica:
 - `POST /`: A2A **1.0 JSON-RPC**, incluyendo streaming mediante SSE. Se usa el SDK
   oficial A2A y el adaptador `A2AExecutor` de Agent Framework, no un protocolo propio.
 
-  Ambos agentes propagan las cabeceras HTTP `X-Agent`, `X-Department`, `X-Team`
-  y `X-User`, ademas de `Ocp-Apim-Subscription-Key`, de cada solicitud A2A a las llamadas al modelo mediante
+  Ambos agentes propagan las cabeceras HTTP `X-Agent`, `X-Department`, `X-Team`,
+  `X-User`, `X-Product-Id` y `X-Subscription-Id` de cada solicitud A2A
+  a las llamadas al modelo mediante
   `extra_headers` del SDK. Los valores se conservan por
   peticion, tambien en streaming y con solicitudes concurrentes; no se modifica
   el cliente compartido ni se introducen en el prompt. Los nombres de cabecera
   se reconocen sin distinguir mayusculas y minusculas. Si no llega alguna
   cabecera, no se envia ni se inventa un valor a partir del perfil. No se propagan otras
-  cabeceras entrantes, incluido `Authorization`: se mantiene Azure Identity para
+  cabeceras entrantes, incluidos `Authorization` y `Ocp-Apim-Subscription-Key`:
+  se mantiene Azure Identity para
   autenticar las llamadas a Foundry.
-  La subscription key solo debe enviarse a endpoints de modelo de confianza;
-  el agente la propaga tambien si se configura una URL directa sin APIM.
 
   Al iniciar cada ejecucion A2A, ambos agentes emiten un log JSON de nivel `INFO`
   con `event=request_headers`, `agent` (el tipo de agente local) y `headers`
-  con los valores recibidos de `X-Agent`, `X-Department`, `X-Team` y `X-User`.
+  con los valores recibidos de `X-Agent`, `X-Department`, `X-Team`, `X-User`,
+  `X-Product-Id` y `X-Subscription-Id`.
   Las cabeceras ausentes se omiten; si no llega ninguna, `headers` es `{}`.
   No se registra `Ocp-Apim-Subscription-Key`, otras cabeceras, tokens de autenticacion ni prompts en este
   evento. `X-User` puede contener un correo: protege el acceso y la retencion de
@@ -267,9 +268,10 @@ con clave, envia tambien `Ocp-Apim-Subscription-Key` para esa peticion.
 La descarga inicial de la Agent Card utiliza la clave de la identidad
 seleccionada para la primera peticion; las peticiones posteriores usan cada
 una la clave de su fila. Los productos deben permitir tanto discovery como
-runtime cuando ambos requieran subscription key. El agente propaga tambien la
-clave al endpoint del modelo, por lo que la subscription debe permitir esa API
-si requiere clave. La clave no se incluye deliberadamente en logs ni resultados JSONL.
+runtime cuando ambos requieran subscription key. El agente no propaga la clave
+al modelo: solo reenvia los metadatos `X-Product-Id` y `X-Subscription-Id` que
+reciba de APIM, junto con las cabeceras `X-*` de identidad indicadas anteriormente.
+La clave no se incluye deliberadamente en logs ni resultados JSONL.
 **El cliente no envia `X-Agent`**: APIM
 debe introducirlo al llamar al agente. Sin `--identities-file` no se envian
 estas cabeceras de identidad ni la subscription key.
