@@ -211,11 +211,13 @@ La clave se envia como `Ocp-Apim-Subscription-Key` tanto al runtime, por
 peticion, como a la descarga de la card usando la identidad de la primera
 peticion. Los productos deben contener las APIs necesarias y estas deben
 exigir subscription key para que se aplique esa proteccion.
-Los agentes no propagan `Ocp-Apim-Subscription-Key` al endpoint del modelo.
-Propagan `X-Product-Id` y `X-Subscription-Id` si APIM las establece antes de
-llamar al agente. Estos IDs son metadatos, no credenciales ni una subscription
-validada por el gateway del modelo. Si esa API exige una clave, necesita una
-configuracion de autenticacion propia; no recibe la clave del cliente A2A.
+Los agentes propagan la misma `Ocp-Apim-Subscription-Key` al endpoint configurado
+del modelo, sin registrarla en logs. No propagan `X-Product-Id` ni
+`X-Subscription-Id`: APIM obtiene el producto y la subscription al validar la
+clave. Para reutilizarla, incluye las APIs del agente y del modelo en el mismo
+producto de la misma instancia APIM y configura la URL del modelo para apuntar
+a ese gateway de confianza. El agente no detecta automaticamente el tipo de
+destino; no envies claves si la URL apunta directamente a Foundry u otro servicio.
 
 Estos usuarios pertenecen a APIM, no a Microsoft Entra ID. El script no crea
 passwords conocidos, configura proveedores de identidad, envia invitaciones

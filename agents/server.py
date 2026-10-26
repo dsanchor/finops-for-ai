@@ -43,8 +43,7 @@ class UsageExecutor(A2AExecutor):
                 "X-Department",
                 "X-Team",
                 "X-User",
-                "X-Product-Id",
-                "X-Subscription-Id",
+                "Ocp-Apim-Subscription-Key",
             )
             if (value := headers.get(name)) is not None
         }
@@ -53,7 +52,11 @@ class UsageExecutor(A2AExecutor):
                 {
                     "event": "request_headers",
                     "agent": settings.kind,
-                    "headers": model_headers,
+                    "headers": {
+                        name: value
+                        for name, value in model_headers.items()
+                        if name != "Ocp-Apim-Subscription-Key"
+                    },
                 }
             )
         )

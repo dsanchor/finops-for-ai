@@ -5,10 +5,17 @@ from pathlib import Path
 import pytest
 
 from dashboards.grafana.generate import (
+    BASIC_DIMENSIONS,
     DATASOURCE,
     DIMENSIONS,
     METRICS,
+    REQUEST_DIMENSIONS,
     build_dashboards,
+    dimension_query,
+    product_comparison,
+    raw_requests,
+    request_base,
+    request_context,
 )
 
 DASHBOARDS = build_dashboards()
@@ -51,6 +58,8 @@ def test_import_contract_and_sections(dashboard):
     rows = [panel for panel in dashboard["panels"] if panel["type"] == "row"]
     assert [row["title"] for row in rows] == [
         "Resumen de consumo",
+        "Acceso y rechazos A2A",
+        "Productos y subscriptions",
         "Reparto organizativo",
         "Usuarios",
         "Calidad de datos",
@@ -72,6 +81,9 @@ def test_unified_dashboard_does_not_duplicate_consumption_panels(dashboard):
         "Consumo por departamento y equipo",
         "Detalle de consumo por usuario y contexto",
         "Calidad de las metricas",
+        "Respuestas HTTP429",
+        "Comparativa de productos: peticiones, HTTP429 y tokens",
+        "Usuarios y subscriptions: impacto de HTTP429",
     ):
         assert required in titles
 
@@ -111,6 +123,7 @@ def test_variables_are_chained_and_all_is_not_a_literal_filter(dashboard):
         "appInsightsResourceId",
         *DIMENSIONS,
         "topN",
+        "minRequests",
     ]
     for index, dimension in enumerate(DIMENSIONS):
         variable = variables[index + 1]
@@ -124,15 +137,26 @@ def test_variables_are_chained_and_all_is_not_a_literal_filter(dashboard):
         for following in DIMENSIONS[index:]:
             assert f"$__contains({following}, ${following})" not in kql
         assert f"| distinct {dimension}" in kql
-    assert variables[-1]["query"] == "5,10,20,50"
+    assert variables[-2]["query"] == "5,10,20,50"
+    assert variables[-1]["query"] == "1,10,50,100"
 
 
 def test_every_data_panel_applies_all_dimension_filters(dashboard):
     for panel in dashboard["panels"]:
         for query in panel.get("targets", []):
             kql = query["azureLogAnalytics"]["query"]
-            for dimension in DIMENSIONS:
+            required = (
+                BASIC_DIMENSIONS
+                if "Antes de filtros" in panel.get("description", "")
+                or "antes de filtros" in panel.get("description", "")
+                else REQUEST_DIMENSIONS
+                if "let AgentRequests" in kql
+                else DIMENSIONS
+            )
+            for dimension in required:
                 assert f"$__contains({dimension}, ${dimension})" in kql
+            if "let AgentRequests" in kql and "TokensByProduct" not in kql:
+                assert "$__contains(model, $model)" not in kql
             if panel["type"] == "timeseries":
                 assert panel["interval"] == "1m"
                 assert panel["fieldConfig"]["defaults"]["custom"]["spanNulls"] is False
@@ -196,3 +220,90 @@ def test_user_concentration_excludes_missing_from_numerator_and_denominator():
     assert "toscalar(PerUser | summarize sum(Tokens))" in kql
     assert "100.0 * TopTokens / TotalIdentificado" in kql
     assert "real(null)" in kql
+
+
+def test_request_scope_and_sampling_are_explicit():
+    kql = raw_requests()
+    assert 'customDimensions["API Type"]) =~ "a2a"' in kql
+    assert 'customDimensions["HTTP Method"]) =~ "POST"' in kql
+    assert 'customDimensions["gen_ai.agent.id"]' in kql
+    assert 'customDimensions["Subscription Name"]' in kql
+    assert 'customDimensions["Product Name"]' in kql
+    assert "coalesce(tolong(itemCount), long(1))" in kql
+    assert "coalesce(tobool(success), false)" in kql
+    assert "$__timeFilter(timestamp)" in kql
+
+
+def test_identity_map_is_unique_before_left_join_and_before_identity_filters():
+    kql = request_context()
+    join_at = kql.index("| join kind=leftouter IdentityContexts")
+    assert "| summarize by service, agent, subscriptionId, department, team, user" in kql[:join_at]
+    assert "| summarize MappingContexts = count()" in kql[:join_at]
+    assert "by service, agent, subscriptionId;" in kql[:join_at]
+    assert "MappingContexts == 1" in kql
+    assert "MappingContexts > 1" in kql
+    assert "not(IdentityConflict)" in kql
+    assert "arg_max" not in kql
+    assert "$__contains" not in kql
+    assert '"ambigua"' in kql
+    assert '"sin correspondencia"' in kql
+    assert '"mapeo incompleto"' in kql
+    assert '"conflicto"' in kql
+    assert "DirectComplete" in kql
+
+
+def test_request_filters_do_not_use_model_and_apply_after_enrichment():
+    kql = request_base()
+    for dimension in REQUEST_DIMENSIONS:
+        assert f"$__contains({dimension}, ${dimension})" in kql
+        assert kql.index(f"$__contains({dimension}, ${dimension})") > kql.index("let AgentRequests")
+    assert "$__contains(model, $model)" not in kql
+
+
+def test_product_join_is_one_to_one_and_preserves_missing_tokens():
+    kql = product_comparison()
+    join_at = kql.index("| join kind=fullouter TokensByProduct on service, product")
+    assert kql[:join_at].count("by service, product") == 2
+    assert "coalesce(Total" not in kql
+    assert "coalesce(Entrada" not in kql
+    assert "coalesce(Salida" not in kql
+    assert "$__contains(model, $model)" not in kql.split("let TokensByProduct")[0]
+    assert "$__contains(model, $model)" in kql.split("let TokensByProduct")[1]
+
+
+def test_options_include_request_only_subscriptions_and_products():
+    for dimension in BASIC_DIMENSIONS:
+        kql = dimension_query(dimension, ())
+        assert "union (" in kql
+        assert "customMetrics" in kql and "requests" in kql
+    assert "requests" not in dimension_query("model", REQUEST_DIMENSIONS)
+
+
+def test_rejection_percentages_have_zero_guard_and_ranking_minimum(dashboard):
+    panels = {p["title"]: p for p in dashboard["panels"]}
+    summary = panels["Porcentaje HTTP429 observado"]["targets"][0]["azureLogAnalytics"]["query"]
+    assert "100.0 * HTTP429 / Peticiones" in summary
+    assert "iff(Peticiones > 0" in summary
+    assert 'countif(Code == "403")' in summary
+    assert 'countif(Code == "429")' in summary
+    for title in (
+        "Usuarios con mayor porcentaje HTTP429 - Top N",
+        "Porcentaje HTTP429 por agente - Top N",
+    ):
+        kql = panels[title]["targets"][0]["azureLogAnalytics"]["query"]
+        assert "| where Peticiones >= $minRequests" in kql
+
+
+def test_coverage_preserves_unattributed_traffic_under_identity_filters(dashboard):
+    panels = {p["title"]: p for p in dashboard["panels"]}
+    for title in (
+        "Peticiones con identidad completa - cobertura",
+        "Peticiones sin identidad completa",
+        "Sampling de requests",
+        "Cobertura y origen de la identidad de requests",
+    ):
+        kql = panels[title]["targets"][0]["azureLogAnalytics"]["query"]
+        for dimension in BASIC_DIMENSIONS:
+            assert f"$__contains({dimension}, ${dimension})" in kql
+        for dimension in ("department", "team", "user", "model"):
+            assert f"$__contains({dimension}, ${dimension})" not in kql

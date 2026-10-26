@@ -46,7 +46,7 @@ tener una URL base, ya sea compartida o propia; si falta, falla al arrancar.
 No se usa `FOUNDRY_PROJECT_ENDPOINT` ni se instancia el SDK de proyectos.
 Las solicitudes Responses van a `<OPENAI_BASE_URL>/responses`, manteniendo
 streaming y las cabeceras `X-Agent`, `X-Department`, `X-Team`, `X-User`,
-`X-Product-Id` y `X-Subscription-Id` recibidas.
+`Ocp-Apim-Subscription-Key` recibidas.
 OpenAI v1 no necesita un parametro `api-version`; las antiguas variables
 `API_VERSION` y `ALLOW_PREVIEW` ya no se utilizan.
 
@@ -54,11 +54,14 @@ La autenticacion usa Azure Identity y un proveedor de tokens Entra ID, con scope
 `https://ai.azure.com/.default`; cambiar la URL no cambia la audiencia del token.
 APIM debe aceptar y validar esa audiencia y configurar la autenticacion hacia
 Foundry. No se anaden API keys del modelo ni se reenvia el token del cliente A2A.
-La cabecera `Ocp-Apim-Subscription-Key` recibida no se propaga al modelo ni se
-registra en logs. En su lugar, APIM puede establecer `X-Product-Id` y
-`X-Subscription-Id` como metadatos antes de llamar al agente. Si el APIM del
-modelo exige una subscription key o una audiencia Entra distinta, se requiere
-una configuracion de autenticacion adicional: los IDs no sustituyen credenciales.
+La cabecera `Ocp-Apim-Subscription-Key` recibida se propaga al endpoint del modelo,
+pero no se registra en logs. No se propagan `X-Product-Id` ni `X-Subscription-Id`:
+APIM obtiene ese contexto al validar la clave. Para reutilizarla, las APIs del
+agente y del modelo deben pertenecer al mismo producto de la misma instancia
+APIM. Si vas a enviar claves, configura la URL del modelo para apuntar a ese
+gateway de confianza; el agente las reenvia al destino configurado, sin detectar
+automaticamente si es APIM o Foundry. Una audiencia Entra distinta requiere
+configuracion de autenticacion adicional.
 
 La autenticacion ante Foundry usa **Azure Identity**, sin API keys del modelo:
 
@@ -128,22 +131,22 @@ Cada servicio publica:
   oficial A2A y el adaptador `A2AExecutor` de Agent Framework, no un protocolo propio.
 
   Ambos agentes propagan las cabeceras HTTP `X-Agent`, `X-Department`, `X-Team`,
-  `X-User`, `X-Product-Id` y `X-Subscription-Id` de cada solicitud A2A
+  `X-User` y `Ocp-Apim-Subscription-Key` de cada solicitud A2A
   a las llamadas al modelo mediante
   `extra_headers` del SDK. Los valores se conservan por
   peticion, tambien en streaming y con solicitudes concurrentes; no se modifica
   el cliente compartido ni se introducen en el prompt. Los nombres de cabecera
   se reconocen sin distinguir mayusculas y minusculas. Si no llega alguna
   cabecera, no se envia ni se inventa un valor a partir del perfil. No se propagan otras
-  cabeceras entrantes, incluidos `Authorization` y `Ocp-Apim-Subscription-Key`:
+  cabeceras entrantes, incluidos `Authorization`, `X-Product-Id` y `X-Subscription-Id`:
   se mantiene Azure Identity para
   autenticar las llamadas a Foundry.
 
   Al iniciar cada ejecucion A2A, ambos agentes emiten un log JSON de nivel `INFO`
   con `event=request_headers`, `agent` (el tipo de agente local) y `headers`
-  con los valores recibidos de `X-Agent`, `X-Department`, `X-Team`, `X-User`,
-  `X-Product-Id` y `X-Subscription-Id`.
-  Las cabeceras ausentes se omiten; si no llega ninguna, `headers` es `{}`.
+  con los valores recibidos de `X-Agent`, `X-Department`, `X-Team` y `X-User`.
+  Las cabeceras ausentes se omiten; si solo llega la clave o no llega ninguna,
+  `headers` es `{}`.
   No se registra `Ocp-Apim-Subscription-Key`, otras cabeceras, tokens de autenticacion ni prompts en este
   evento. `X-User` puede contener un correo: protege el acceso y la retencion de
   estos logs. Configura `LOG_LEVEL=INFO` (o el override del agente) para verlos.
@@ -167,12 +170,15 @@ Para cargas prolongadas debe sustituirse por un almacen persistente con
 politica de retencion; las solicitudes pueden almacenar contenido en ese almacen.
 Usa solo datos sinteticos en esta demostracion.
 
-## Dashboards de consumo en Grafana
+## Dashboards de consumo y acceso en Grafana
 
 El [dashboard unificado de Grafana](dashboards/grafana/README.md) permite consultar
-consumo de tokens desde `customMetrics` de Application Insights, con filtros
-por agente, departamento, equipo y usuario. Incluye resumen, reparto
-organizativo, detalle de usuarios y calidad de datos; por ahora no calcula costes ni cuotas.
+consumo de tokens desde `customMetrics` y peticiones A2A desde `requests` de
+Application Insights. Incluye respuestas HTTP429 y su porcentaje, comparativa
+por producto/subscription, consumo por modelo y reparto por agente,
+departamento, equipo y usuario. Expone la cobertura y las limitaciones de
+atribucion de identidad; el filtro de modelo solo afecta a tokens. No calcula
+costes ni cuota restante, ni identifica automaticamente la causa de HTTP429/HTTP403.
 
 ## 3. Clientes Python A2A streaming
 
@@ -268,9 +274,11 @@ con clave, envia tambien `Ocp-Apim-Subscription-Key` para esa peticion.
 La descarga inicial de la Agent Card utiliza la clave de la identidad
 seleccionada para la primera peticion; las peticiones posteriores usan cada
 una la clave de su fila. Los productos deben permitir tanto discovery como
-runtime cuando ambos requieran subscription key. El agente no propaga la clave
-al modelo: solo reenvia los metadatos `X-Product-Id` y `X-Subscription-Id` que
-reciba de APIM, junto con las cabeceras `X-*` de identidad indicadas anteriormente.
+runtime cuando ambos requieran subscription key. El agente propaga la misma clave
+al endpoint configurado del modelo, junto con las cabeceras `X-*` de identidad
+indicadas anteriormente; no reenvia `X-Product-Id` ni `X-Subscription-Id`.
+Para usar la clave tambien en el modelo, incluye su API en el mismo producto
+y configura su URL de APIM como destino.
 La clave no se incluye deliberadamente en logs ni resultados JSONL.
 **El cliente no envia `X-Agent`**: APIM
 debe introducirlo al llamar al agente. Sin `--identities-file` no se envian

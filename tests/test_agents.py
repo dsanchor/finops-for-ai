@@ -213,7 +213,9 @@ async def test_model_headers_are_isolated_per_request(live_agent, caplog):
     async def send(index, model_headers):
         headers = {"Authorization": "Bearer inbound-only", "X-Unrelated": "not-forwarded"}
         headers.update({name.swapcase(): value for name, value in model_headers.items()})
-        headers["Ocp-Apim-Subscription-Key"] = f"test-blocked-key-{index}"
+        headers.update(
+            {"X-Product-Id": "blocked-product", "X-Subscription-Id": "blocked-subscription-id"}
+        )
         async with httpx.AsyncClient(timeout=10, headers=headers) as http:
             client = await ClientFactory(ClientConfig(httpx_client=http)).create_from_url(url)
             try:
@@ -223,7 +225,7 @@ async def test_model_headers_are_isolated_per_request(live_agent, caplog):
                 await client.close()
         assert model.request_kwargs[prompt].get("extra_headers", {}) == model_headers
 
-    masks = (0, 1, 2, 4, 8, 16, 32, 15, 48, 63)
+    masks = (0, 1, 2, 4, 8, 16, 15, 31)
     await asyncio.gather(
         *(
             send(
@@ -236,8 +238,7 @@ async def test_model_headers_are_isolated_per_request(live_agent, caplog):
                             "X-Department",
                             "X-Team",
                             "X-User",
-                            "X-Product-Id",
-                            "X-Subscription-Id",
+                            "Ocp-Apim-Subscription-Key",
                         )
                     )
                     if index & (1 << bit)
@@ -255,11 +256,21 @@ async def test_model_headers_are_isolated_per_request(live_agent, caplog):
     assert len(records) == len(masks) + 1
     assert all(record["agent"] == config.kind for record in records)
     assert sorted(json.dumps(record["headers"], sort_keys=True) for record in records) == sorted(
-        json.dumps(kwargs.get("extra_headers", {}), sort_keys=True)
+        json.dumps(
+            {
+                name: value
+                for name, value in kwargs.get("extra_headers", {}).items()
+                if name != "Ocp-Apim-Subscription-Key"
+            },
+            sort_keys=True,
+        )
         for kwargs in model.request_kwargs.values()
     )
     assert "Ocp-Apim-Subscription-Key" not in caplog.text
-    assert "test-blocked-key-" not in caplog.text
+    assert "value-16-Ocp-Apim-Subscription-Key" not in caplog.text
+    assert "value-31-Ocp-Apim-Subscription-Key" not in caplog.text
+    assert "blocked-product" not in caplog.text
+    assert "blocked-subscription-id" not in caplog.text
     assert records[-1]["headers"] == {}
 
 
@@ -302,7 +313,7 @@ def model_stream_response(model: str) -> httpx.Response:
 
 
 @pytest.mark.parametrize("kind", ["risk", "customer"])
-@pytest.mark.parametrize("header_mask", range(64))
+@pytest.mark.parametrize("header_mask", range(32))
 async def test_forwarded_headers_reach_model_http_request(kind, header_mask, caplog):
     caplog.set_level(logging.INFO, logger="agents.server")
     requests: list[httpx.Request] = []
@@ -317,8 +328,7 @@ async def test_forwarded_headers_reach_model_http_request(kind, header_mask, cap
         "X-Department",
         "X-Team",
         "X-User",
-        "X-Product-Id",
-        "X-Subscription-Id",
+        "Ocp-Apim-Subscription-Key",
     )
     model_headers = {
         name: f"apim-value-{name}"
@@ -327,7 +337,9 @@ async def test_forwarded_headers_reach_model_http_request(kind, header_mask, cap
     }
     incoming_headers = {"authorization": "Bearer inbound-only", "x-unrelated": "not-forwarded"}
     incoming_headers.update({name.lower(): value for name, value in model_headers.items()})
-    incoming_headers["ocp-apim-subscription-key"] = "test-blocked-subscription-key"
+    incoming_headers.update(
+        {"x-product-id": "blocked-product", "x-subscription-id": "blocked-subscription-id"}
+    )
     context = RequestContext(
         call_context=ServerCallContext(state={"headers": incoming_headers}),
         request=SendMessageRequest(
@@ -354,9 +366,12 @@ async def test_forwarded_headers_reach_model_http_request(kind, header_mask, cap
         assert requests[0].headers.get(name) == model_headers.get(name)
     assert requests[0].headers["authorization"] == "Bearer test-model-credential"
     assert "x-unrelated" not in requests[0].headers
-    assert "Ocp-Apim-Subscription-Key" not in requests[0].headers
+    assert "X-Product-Id" not in requests[0].headers
+    assert "X-Subscription-Id" not in requests[0].headers
     assert "Ocp-Apim-Subscription-Key" not in caplog.text
-    assert "test-blocked-subscription-key" not in caplog.text
+    assert "apim-value-Ocp-Apim-Subscription-Key" not in caplog.text
+    assert "blocked-product" not in caplog.text
+    assert "blocked-subscription-id" not in caplog.text
     body = json.loads(requests[0].content)
     assert body["model"] == config.model
     assert body["stream"] is True
@@ -382,8 +397,7 @@ async def test_configured_model_endpoint_and_headers(kind, base_url, monkeypatch
         "X-Department": "apim-department",
         "X-Team": "apim-team",
         "X-User": "apim-user",
-        "X-Product-Id": "premium",
-        "X-Subscription-Id": "apim-subscription-id",
+        "Ocp-Apim-Subscription-Key": "test-subscription-key",
     }
     requests: list[httpx.Request] = []
 
@@ -425,7 +439,8 @@ async def test_configured_model_endpoint_and_headers(kind, base_url, monkeypatch
                 transport=httpx.ASGITransport(app=app),
                 headers={
                     **model_headers,
-                    "Ocp-Apim-Subscription-Key": "test-blocked-subscription-key",
+                    "X-Product-Id": "blocked-product",
+                    "X-Subscription-Id": "blocked-subscription-id",
                 },
             ) as http,
         ):
@@ -440,7 +455,8 @@ async def test_configured_model_endpoint_and_headers(kind, base_url, monkeypatch
     assert str(requests[0].url) == f"{base_url}/responses"
     for name, value in model_headers.items():
         assert requests[0].headers[name] == value
-    assert "Ocp-Apim-Subscription-Key" not in requests[0].headers
+    assert "X-Product-Id" not in requests[0].headers
+    assert "X-Subscription-Id" not in requests[0].headers
     assert requests[0].headers["authorization"] == "Bearer test-entra-token"
     assert credential.scopes == [("https://ai.azure.com/.default",)]
     assert credential.closed
@@ -559,10 +575,7 @@ async def test_client_csv_headers_reach_model(
         assert await run(args, config.kind) == 0
         assert [
             model.request_kwargs[f"CSV request {index}"]["extra_headers"] for index in range(8)
-        ] == [
-            {name: value for name, value in headers.items() if name != "Ocp-Apim-Subscription-Key"}
-            for headers in expected
-        ]
+        ] == expected
         assert all("X-Agent" not in headers for headers in expected)
         card_headers = [headers for method, headers in captured_requests if method == "GET"]
         runtime_headers = [headers for method, headers in captured_requests if method == "POST"]
