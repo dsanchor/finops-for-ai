@@ -1,17 +1,32 @@
+import asyncio
 import json
 import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from typing import Any
+from uuid import UUID, uuid4
 
 import httpx
 import uvicorn
 from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
+from a2a.server.events import Event, EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
-from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-from agent_framework import Agent, AgentResponseUpdate, Message, SupportsChatGetResponse
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentInterface,
+    AgentSkill,
+    TaskStatusUpdateEvent,
+)
+from agent_framework import (
+    Agent,
+    AgentResponseUpdate,
+    AgentSession,
+    Message,
+    SupportsChatGetResponse,
+)
 from agent_framework.a2a import A2AExecutor
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from azure.core.credentials_async import AsyncTokenCredential
@@ -28,14 +43,50 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from agents.config import AgentKind, Settings
+from agents.errors import InvocationFailure, Metadata, failure_details, failure_message
 from agents.profiles import PROFILES
+from agents.telemetry import ExceptionTelemetry, record_failure
 
 logger = logging.getLogger(__name__)
 
 
 class UsageExecutor(A2AExecutor):
-    def __init__(self, agent: Agent, settings: Settings, context: RequestContext):
+    def __init__(
+        self,
+        agent: Agent,
+        settings: Settings,
+        context: RequestContext,
+        telemetry: ExceptionTelemetry | None = None,
+    ):
         headers = Headers(context.call_context.state.get("headers", {}))
+        invocation = headers.get("X-Invocation-Id")
+        if invocation:
+            try:
+                invocation = str(UUID(invocation))
+            except ValueError as exc:
+                raise ValueError("X-Invocation-Id must be a UUID") from exc
+        self.correlation: Metadata = {
+            "invocation_id": invocation or str(uuid4()),
+            "correlation_source": "header" if invocation else "generated",
+            "model_call_id": str(uuid4()),
+        }
+        self.metadata: Metadata = {
+            "event": "agent_invocation_failed",
+            "schema_version": "1",
+            **self.correlation,
+            "service": headers.get("X-Apim-Service-Id")
+            or settings.apim_service_id
+            or "(sin dimension)",
+            "agent": headers.get("X-Agent") or settings.kind,
+            "model": settings.model,
+            **{
+                d: headers.get(f"X-{d}") or "(sin dimension)"
+                for d in ("department", "team", "user")
+            },
+        }
+        self.failure: Metadata = {}
+        self.output_started = False
+        self.telemetry = telemetry
         model_headers = {
             name: value
             for name in (
@@ -60,9 +111,27 @@ class UsageExecutor(A2AExecutor):
                 }
             )
         )
+        model_headers["X-Invocation-Id"] = str(self.correlation["invocation_id"])
+        model_headers["X-Model-Call-Id"] = str(self.correlation["model_call_id"])
         run_kwargs = {"client_kwargs": {"extra_headers": model_headers}} if model_headers else {}
         super().__init__(agent, stream=True, run_kwargs=run_kwargs)
         self.settings = settings
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        await super().execute(context, CorrelatedEvents(event_queue, self))
+
+    async def _run_stream(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
+        try:
+            await super()._run_stream(query, session, updater)
+        except Exception as exc:
+            self.failure = failure_details(exc)
+            self.failure["partial_output"] = self.output_started
+            metadata = {**self.metadata, **self.failure, "task_id": updater.task_id}
+            if self.telemetry is not None:
+                self.telemetry.record_failure(metadata)
+            else:
+                record_failure(metadata)
+            raise InvocationFailure(failure_message(self.failure)) from None
 
     async def handle_events(
         self,
@@ -72,6 +141,8 @@ class UsageExecutor(A2AExecutor):
         default_artifact_id: str | None = None,
     ) -> None:
         for content in item.contents:
+            if content.type == "text" and content.text:
+                self.output_started = True
             if content.type == "usage":
                 profile = PROFILES[self.settings.kind]
                 logger.info(
@@ -87,6 +158,19 @@ class UsageExecutor(A2AExecutor):
                     )
                 )
         await super().handle_events(item, updater, streamed_artifact_ids, default_artifact_id)
+
+
+class CorrelatedEvents(EventQueue):
+    def __init__(self, target: EventQueue, executor: UsageExecutor):
+        self.target = target
+        self.executor = executor
+
+    async def enqueue_event(self, event: Event) -> None:
+        if isinstance(event, TaskStatusUpdateEvent):
+            event.metadata.update(self.executor.correlation)
+            if self.executor.failure:
+                event.metadata.update(self.executor.failure)
+        await self.target.enqueue_event(event)
 
 
 class PerRequestExecutor(AgentExecutor):
@@ -154,31 +238,40 @@ def create_app(
         ],
     )
     client: OpenAIChatClient | None = None
+    telemetry: ExceptionTelemetry | None = None
 
     def make_executor(context: RequestContext) -> AgentExecutor:
         if executor_factory is not None:
             return executor_factory(context)
         if client is None:
             raise RuntimeError("Model client has not started")
-        return UsageExecutor(build_agent(settings, client), settings, context)
+        return UsageExecutor(build_agent(settings, client), settings, context, telemetry)
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
-        nonlocal client
+        nonlocal client, telemetry
         if executor_factory is not None:
             yield
             return
-        async with credential_for(settings) as credential:
-            client = OpenAIChatClient(
-                model=settings.model,
-                base_url=settings.openai_base_url,
-                api_key=get_bearer_token_provider(credential, "https://ai.azure.com/.default"),
-            )
-            client.client.timeout = httpx.Timeout(settings.request_timeout)
-            client.client.max_retries = settings.max_retries
-            async with client.client:
-                yield
-            client = None
+        connection = settings.applicationinsights_connection_string
+        telemetry = ExceptionTelemetry(
+            connection.get_secret_value() if connection else None, settings.kind
+        )
+        try:
+            async with credential_for(settings) as credential:
+                client = OpenAIChatClient(
+                    model=settings.model,
+                    base_url=settings.openai_base_url,
+                    api_key=get_bearer_token_provider(credential, "https://ai.azure.com/.default"),
+                )
+                client.client.timeout = httpx.Timeout(settings.request_timeout)
+                client.client.max_retries = settings.max_retries
+                async with client.client:
+                    yield
+                client = None
+        finally:
+            await asyncio.to_thread(telemetry.close)
+            telemetry = None
 
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok", "agent": settings.kind})

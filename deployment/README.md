@@ -70,6 +70,70 @@ implicito ni una dependencia del SDK de proyectos. Mantiene Azure Identity y el 
 `https://ai.azure.com/.default`: APIM debe validar esa audiencia y configurar
 su autenticacion hacia Foundry. No configura las politicas de APIM.
 
+## Excepciones y correlacion con APIM
+
+El dashboard necesita `exceptions` de los agentes para ver un fallo de modelo
+dentro de una tarea SSE HTTP200. Las tablas `requests` de APIM no contienen
+automaticamente ese resultado A2A.
+
+1. Configura `APPLICATIONINSIGHTS_CONNECTION_STRING` con la conexion del
+   **mismo componente Application Insights que usa APIM**. No publiques su
+   valor ni lo guardes en el repositorio. Localmente puede ir en `.env`;
+   para Container Apps, exportala en el entorno antes de ejecutar el script.
+   El script la almacena como secreto `applicationinsights-connection-string`
+   y usa un `secretref` en ambas apps, tanto en creacion como en actualizacion.
+   Si no se proporciona al script, no modifica una configuracion existente.
+2. Crea en APIM un policy fragment con ID **`agent-correlation`**, usando
+   [apim-agent-correlation.xml](apim-agent-correlation.xml).
+3. En el `inbound` de **cada API A2A**, incluye el fragmento **antes de `<base/>`**,
+   conservando las demas policies de la API:
+
+   ```xml
+   <include-fragment fragment-id="agent-correlation" />
+   <base />
+   ```
+
+   Sobrescribe `X-Invocation-Id` con el Request Id de APIM y
+   `X-Apim-Service-Id` con su servicio. No lo incluyas en la API del modelo:
+   alli no debe sustituirse el identificador de la invocacion original.
+4. Reconstruye/publica y despliega las nuevas imagenes. El script configura
+   `RISK_MAX_RETRIES=0` y `CUSTOMER_MAX_RETRIES=0` por defecto. `MAX_RETRIES`
+   o sus overrides por agente permiten habilitar reintentos explicitamente.
+   Los fallos finales se exportan una sola vez, no una vez por intento.
+5. Comprueba la ingesta despues de un fallo nuevo:
+
+   ```kusto
+   exceptions
+   | where timestamp > ago(30m)
+   | where tostring(customDimensions["event"]) == "agent_invocation_failed"
+   | summarize Fallos = count()
+       by Origen = tostring(customDimensions["error_origin"]),
+          Tipo = tostring(customDimensions["error_kind"]),
+          HTTP = tostring(customDimensions["upstream_status"])
+   ```
+
+El exporter envia ExceptionData con atributos saneados, sin prompts, bodies
+de error originales, subscription keys ni tokens. No habilita instrumentacion
+automatica de requests/dependencies que duplique la telemetria de APIM.
+Usa salida HTTPS al ingestion endpoint de Application Insights; si esta
+restringido por red o politica de autenticacion, configura ese acceso antes
+de esperar datos. El envio es por lotes, no una confirmacion sincrona de ingesta.
+Al apagar se intenta vaciar la cola; los errores de envio deben revisarse en logs.
+La ausencia de excepciones no prueba que todo haya ido bien.
+
+Sin el fragmento, el agente genera su propio `invocation_id`, y la excepcion
+queda visible pero sin correspondencia con `requests["Request Id"]`.
+`APIM_SERVICE_ID` es un fallback opcional de servicio, no sustituye esa correlacion.
+Los rechazos HTTP directos de A2A y las excepciones se deduplican por
+servicio/identificador; los rechazos HTTP al modelo se muestran aparte como
+intentos y no se suman como nuevas invocaciones afectadas.
+
+Opcionalmente, registra `X-Invocation-Id` y `X-Model-Call-Id` en **Frontend
+request headers** del diagnostico de la API del modelo para inspeccionar
+los intentos correlacionados. Nunca registres `Ocp-Apim-Subscription-Key`
+ni `Authorization`. El script no modifica los diagnosticos ni las policies
+de APIM y no rellena historicos.
+
 ## Acceso, estado y comprobacion
 
 **El ingress HTTPS es externo y publico, sin autenticacion de clientes.**

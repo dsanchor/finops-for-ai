@@ -31,6 +31,15 @@ uv sync --frozen
 cp .env.example .env
 ```
 
+En WSL, si `.venv` dentro de un montaje Windows/OneDrive produce errores de
+entrada/salida al instalar dependencias, usa un entorno en el filesystem Linux.
+Mantiene el mismo lockfile; conserva esta variable tambien para `uv run`:
+
+```bash
+export UV_PROJECT_ENVIRONMENT="$HOME/.venvs/ai-cost-control"
+uv sync --frozen
+```
+
 Edita `.env` con la URL base OpenAI v1 y los nombres de despliegue. Usa el
 mismo cliente y la misma configuracion tanto para APIM como para Azure OpenAI:
 
@@ -88,7 +97,9 @@ archivo al arrancar. `.env` y variantes quedan excluidos de Git y del contexto D
 | `AUTH_MODE` | `default` en codigo; `cli` en el ejemplo |
 | `MANAGED_IDENTITY_CLIENT_ID` | Opcional |
 | `REQUEST_TIMEOUT` | 180 segundos por solicitud HTTP al modelo |
-| `MAX_RETRIES` | 2 reintentos del SDK; pueden incrementar llamadas y consumo |
+| `MAX_RETRIES` | 0 por defecto: comunica el primer error; un override positivo habilita reintentos |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Opcional: exporta fallos finales saneados a `exceptions` del mismo Application Insights de APIM |
+| `APIM_SERVICE_ID` | Fallback del servicio APIM si no llega `X-Apim-Service-Id` |
 | `LOG_LEVEL` | `INFO` |
 | `RISK_HOST`, `CUSTOMER_HOST` | `0.0.0.0` |
 | `RISK_PORT`, `CUSTOMER_PORT` | 8001 / 8002 |
@@ -170,15 +181,58 @@ Para cargas prolongadas debe sustituirse por un almacen persistente con
 politica de retencion; las solicitudes pueden almacenar contenido en ese almacen.
 Usa solo datos sinteticos en esta demostracion.
 
+### Errores del modelo, SSE y correlacion
+
+Los errores finales de la ejecucion se comunican como tarea A2A `FAILED`, sin
+cambiar el HTTP200 de un SSE ya iniciado. El mensaje se sanea: no contiene
+el body original del error, prompts, claves ni tokens. La metadata del evento
+incluye `invocation_id`, `model_call_id`, `error_origin`, `error_kind`,
+`retryable` y, cuando existen, `upstream_status` y `retry_after_seconds`.
+Una HTTP403 se clasifica como `forbidden`, no como cuota, salvo evidencia
+explicita como `QuotaExceeded` o `insufficient_quota`.
+
+Con `APPLICATIONINSIGHTS_CONNECTION_STRING` configurada, el agente exporta una
+excepcion final por ejecucion fallida a `exceptions`, identificada por
+`customDimensions.event = "agent_invocation_failed"` y `schema_version = "1"`.
+No se anaden excepciones por cada reintento ni se instrumentan automaticamente
+todas las peticiones HTTP del agente. Sin esa variable, los fallos siguen
+apareciendo en logs JSON y A2A, pero un aviso al arrancar indica que no se
+exportan a Application Insights.
+
+Para enlazar el fallo con la peticion original, configura APIM con el
+[fragmento de correlacion](deployment/apim-agent-correlation.xml) y sigue la
+[configuracion de despliegue](deployment/README.md#excepciones-y-correlacion-con-apim).
+APIM sobrescribe `X-Invocation-Id` con su `context.RequestId` y
+`X-Apim-Service-Id` con el servicio. Sin el primer header se genera un UUID:
+el error es visible, pero no puede enlazarse automaticamente con requests de APIM.
+Un header presente debe contener un UUID valido; no se acepta cualquier texto.
+Protege el acceso directo al agente: esos headers no autentican al emisor.
+
+Se reenvian `X-Invocation-Id` y `X-Model-Call-Id` al endpoint del modelo.
+El segundo identifica la llamada logica actual y permanece estable si se
+habilitan reintentos; cada ejecucion tiene identificadores aislados.
+Actualmente cada ejecucion realiza una llamada logica al modelo, sin herramientas.
+Si se introducen varias llamadas por ejecucion, habra que asignar un
+`model_call_id` distinto a cada una.
+`MAX_RETRIES=0` es el nuevo valor predeterminado, pero revisa los overrides y
+ficheros `.env` existentes: un `MAX_RETRIES=2` explicito mantiene los reintentos.
+
 ## Dashboards de consumo y acceso en Grafana
 
 El [dashboard unificado de Grafana](dashboards/grafana/README.md) permite consultar
 consumo de tokens desde `customMetrics` y peticiones A2A desde `requests` de
-Application Insights. Incluye respuestas HTTP429 y su porcentaje, comparativa
-por producto/subscription, consumo por modelo y reparto por agente,
+Application Insights. Clasifica los HTTP429 por `API Type`: `a2a` como
+`request-rate-limit` de agentes y `http` como `llm-rate-limit` del modelo,
+segun la convencion de este entorno. Incluye porcentajes independientes por
+capa, comparativa por producto/subscription, consumo por modelo y reparto por agente,
 departamento, equipo y usuario. Expone la cobertura y las limitaciones de
-atribucion de identidad; el filtro de modelo solo afecta a tokens. No calcula
-costes ni cuota restante, ni identifica automaticamente la causa de HTTP429/HTTP403.
+atribucion de identidad; el filtro de modelo solo afecta a tokens y el acceso
+HTTP al modelo solo filtra servicio/producto/subscription. No calcula costes
+ni cuota restante, ni confirma la policy real que origina un HTTP429/HTTP403.
+La seccion de errores combina rechazos HTTP por capa con excepciones finales
+correlacionadas, incluidos fallos de tareas dentro de HTTP200. Las invocaciones
+afectadas se deduplican por servicio e `invocation_id`; no se suman a ellas
+los intentos HTTP del modelo.
 
 ## 3. Clientes Python A2A streaming
 
@@ -316,6 +370,9 @@ de entrada/salida, latencia total y tiempo hasta el primer fragmento.
 Los caracteres **no son tokens**. Si una peticion falla despues de recibir texto,
 `output` conserva los fragmentos recibidos, con `status=failed` y el detalle en
 `error`; no debe interpretarse como una respuesta completa.
+Si el agente proporciona metadata de error A2A, se conserva en `error_details`,
+incluidos origen, codigo upstream e identificadores de correlacion. Los errores
+de transporte sin metadata dejan ese campo a `null`.
 **Estos registros ahora contienen el contenido enviado y recibido**: evita datos
 sensibles y protege los archivos y logs de consola. El resumen va a stderr.
 Los errores de transporte, tareas fallidas, rechazos y streams incompletos se

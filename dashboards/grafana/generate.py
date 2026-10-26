@@ -1,4 +1,4 @@
-"""Generate a unified Grafana dashboard for AI consumption and A2A access telemetry."""
+"""Generate a unified Grafana dashboard for AI consumption and access telemetry."""
 
 import json
 from pathlib import Path
@@ -11,6 +11,8 @@ RESOURCE_ID = (
 BASIC_DIMENSIONS = ("service", "agent", "product", "subscriptionId")
 IDENTITY_DIMENSIONS = ("department", "team", "user")
 REQUEST_DIMENSIONS = BASIC_DIMENSIONS + IDENTITY_DIMENSIONS
+MODEL_REQUEST_DIMENSIONS = ("service", "product", "subscriptionId")
+LIMIT_TYPES = {"a2a": "request-rate-limit", "http": "llm-rate-limit"}
 DIMENSIONS = REQUEST_DIMENSIONS + ("model",)
 METRICS = ("Prompt Tokens", "Completion Tokens", "Total Tokens")
 MISSING = "(sin dimension)"
@@ -49,7 +51,7 @@ def total_base():
     return base() + '\n| where name == "Total Tokens"'
 
 
-def raw_requests():
+def raw_requests(api_type="a2a"):
     fields = {
         "service": "Service ID",
         "agent": "gen_ai.agent.id",
@@ -58,23 +60,26 @@ def raw_requests():
         "department": "department",
         "team": "team",
         "user": "user",
+        "api": "API Name",
     }
     return (
         "requests\n| where $__timeFilter(timestamp)"
-        '\n| where tostring(customDimensions["API Type"]) =~ "a2a"'
+        f'\n| where tostring(customDimensions["API Type"]) =~ "{api_type}"'
         '\n| where tostring(customDimensions["HTTP Method"]) =~ "POST"'
         "\n| extend\n"
         + ",\n".join(
             f'    {name} = tostring(customDimensions["{key}"])' for name, key in fields.items()
         )
-        + ",\n    Code = tostring(resultCode),"
+        + f',\n    ApiType = "{api_type}", LimitType = "{LIMIT_TYPES[api_type]}",'
+        '\n    InvocationId = trim(@"\\s+", tostring(customDimensions["Request Id"])),'
+        "\n    Code = tostring(resultCode),"
         "\n    Successful = coalesce(tobool(success), false),"
         "\n    Represented = coalesce(tolong(itemCount), long(1))"
         "\n| extend\n"
         + ",\n".join(
             f'    {dimension} = iff(isempty(trim(@"\\s+", {dimension})), '
             f'"{MISSING}", trim(@"\\s+", {dimension}))'
-            for dimension in REQUEST_DIMENSIONS
+            for dimension in (*REQUEST_DIMENSIONS, "api")
         )
     )
 
@@ -118,13 +123,112 @@ def request_context():
             for d in IDENTITY_DIMENSIONS
         )
         + "\n| project timestamp, service, agent, product, subscriptionId, department, team, user,"
-        + " Code, Successful, Represented, Attribution;"
+        + " api, ApiType, LimitType, Code, Successful, Represented, Attribution, InvocationId;"
         + "\n"
     )
 
 
 def request_base(dimensions=REQUEST_DIMENSIONS):
     return request_context() + filtered("AgentRequests", dimensions)
+
+
+def model_request_base(dimensions=MODEL_REQUEST_DIMENSIONS):
+    complete = " and ".join(f'{d} != "{MISSING}"' for d in IDENTITY_DIMENSIONS)
+    return (
+        filtered(raw_requests("http"), dimensions)
+        + f'\n| extend Attribution = iff({complete}, "directa", "sin correspondencia")'
+    )
+
+
+def raw_exceptions():
+    fields = {
+        **{d: d for d in REQUEST_DIMENSIONS if d not in ("product", "subscriptionId")},
+        "InvocationId": "invocation_id",
+        "CorrelationSource": "correlation_source",
+        "ErrorOrigin": "error_origin",
+        "ErrorKind": "error_kind",
+        "ModelCallId": "model_call_id",
+        "model": "model",
+        "TaskId": "task_id",
+    }
+    return (
+        "exceptions\n| where $__timeFilter(timestamp)"
+        '\n| where tostring(customDimensions["event"]) == "agent_invocation_failed"'
+        '\n| where tostring(customDimensions["schema_version"]) == "1"'
+        "\n| extend "
+        + ",\n    ".join(
+            f'{name} = trim(@"\\s+", tostring(customDimensions["{key}"]))'
+            for name, key in fields.items()
+        )
+        + f',\n    product = "{MISSING}", subscriptionId = "{MISSING}",'
+        '\n    UpstreamStatus = toint(customDimensions["upstream_status"]),'
+        '\n    RetryAfterSeconds = todouble(customDimensions["retry_after_seconds"]),'
+        "\n    Represented = coalesce(tolong(itemCount), long(1))"
+        "\n| extend "
+        + ",\n    ".join(
+            f'{d} = iff(isempty({d}), "{MISSING}", {d})'
+            for d in (*REQUEST_DIMENSIONS, "model", "ErrorOrigin", "ErrorKind")
+        )
+    )
+
+
+def failure_context():
+    """Correlate final exceptions only with an exact, unique APIM root request."""
+    return (
+        request_context()
+        + "let RootRequests = AgentRequests"
+        + f'\n| where isnotempty(InvocationId) and service != "{MISSING}"'
+        + "\n| summarize arg_max(timestamp, *) by service, InvocationId;"
+        + "\nlet RootContext = RootRequests"
+        + "\n| project service, InvocationId, RootObserved = true,"
+        + " RootCode = Code, RootAttribution = Attribution,"
+        + ", ".join(f"root_{d} = {d}" for d in REQUEST_DIMENSIONS if d != "service")
+        + ";\nlet FinalFailures = "
+        + raw_exceptions()
+        + "\n| join kind=leftouter RootContext on service, InvocationId"
+        + "\n| extend Correlation = case("
+        + 'isempty(InvocationId), "sin invocation_id",'
+        + f' service == "{MISSING}", "sin servicio",'
+        + ' coalesce(RootObserved, false), "raiz A2A exacta", "sin raiz A2A en intervalo")'
+        + "\n| extend "
+        + ",\n    ".join(
+            f'{d} = iff(isnotempty(root_{d}) and root_{d} != "{MISSING}", root_{d}, {d})'
+            for d in REQUEST_DIMENSIONS
+            if d != "service"
+        )
+        + ";\n"
+    )
+
+
+def final_failure_base(dimensions=REQUEST_DIMENSIONS):
+    return failure_context() + filtered("FinalFailures", dimensions)
+
+
+def impacted_invocations():
+    return (
+        failure_context()
+        + "let HttpFailures = RootRequests"
+        + "\n| where not(Successful) or toint(Code) >= 400"
+        + '\n| extend ErrorOrigin = "http_a2a", ErrorKind = strcat("HTTP ", Code),'
+        + '\n    FailureSource = "HTTP A2A", SourcePriority = 0,'
+        + '\n    Correlation = "raiz A2A exacta", UpstreamStatus = int(null), RootCode = Code'
+        + "\n| project timestamp, service, InvocationId, "
+        + ", ".join(d for d in REQUEST_DIMENSIONS if d != "service")
+        + ", ErrorOrigin, ErrorKind, FailureSource, SourcePriority, Correlation,"
+        + " UpstreamStatus, RootCode;"
+        + "\nlet InstrumentedFailures = FinalFailures"
+        + f'\n| where isnotempty(InvocationId) and service != "{MISSING}"'
+        + "\n| summarize arg_max(timestamp, *) by service, InvocationId"
+        + '\n| extend FailureSource = "excepcion final", SourcePriority = 1'
+        + "\n| project timestamp, service, InvocationId, "
+        + ", ".join(d for d in REQUEST_DIMENSIONS if d != "service")
+        + ", ErrorOrigin, ErrorKind, FailureSource, SourcePriority, Correlation,"
+        + " UpstreamStatus, RootCode;"
+        + "\nlet Impacted = union HttpFailures, InstrumentedFailures"
+        + "\n| summarize arg_max(SourcePriority, *) by service, InvocationId;"
+        + "\n"
+        + filtered("Impacted", REQUEST_DIMENSIONS)
+    )
 
 
 def request_summary(groups=()):
@@ -157,6 +261,15 @@ def dimension_query(dimension, preceding):
             + filtered(raw_requests(), preceding)
             + f"\n| project {dimension})"
         )
+        if dimension in MODEL_REQUEST_DIMENSIONS:
+            query += (
+                ",\n("
+                + filtered(
+                    raw_requests("http"),
+                    tuple(d for d in preceding if d in MODEL_REQUEST_DIMENSIONS),
+                )
+                + f"\n| project {dimension})"
+            )
     else:
         query = (
             request_context()
@@ -164,6 +277,15 @@ def dimension_query(dimension, preceding):
             + metrics
             + "),\n("
             + filtered("AgentRequests", preceding)
+            + f"\n| project {dimension})"
+        )
+    if dimension != "model":
+        query = (
+            failure_context()
+            + "union ("
+            + query.removeprefix(request_context())
+            + "),\n("
+            + filtered("FinalFailures", preceding)
             + f"\n| project {dimension})"
         )
     return query + f"\n| distinct {dimension}\n| order by {dimension} asc"
@@ -274,7 +396,7 @@ def panel(title, kind, query, x, y, w, h, description, unit="short"):
             },
             "overrides": [
                 {
-                    "matcher": {"id": "byName", "options": "Porcentaje"},
+                    "matcher": {"id": "byRegexp", "options": "^Porcentaje(Modelo)?$"},
                     "properties": [
                         {"id": "unit", "value": "percent"},
                         {"id": "decimals", "value": 1},
@@ -412,7 +534,9 @@ def request_table(groups, title, y, order="HTTP429"):
         y,
         24,
         9,
-        "Peticiones y HTTP429 son filas observadas; Representadas pondera itemCount "
+        "Solo A2A POST: HTTP429 se clasifica como request-rate-limit por convencion "
+        "de API Type. No incluye limites LLM. Peticiones y HTTP429 son filas observadas; "
+        "Representadas pondera itemCount "
         "(estimacion si hay sampling). Porcentaje = HTTP429 / Peticiones. "
         "HTTP403 no equivale a cuota confirmada. Inferidas identifica peticiones enriquecidas "
         "desde metricas; SinIdentidad tiene alguna dimension de identidad ausente. "
@@ -423,8 +547,9 @@ def request_table(groups, title, y, order="HTTP429"):
 def access_panels():
     panels = [
         note(
-            "**Peticiones A2A POST, no llamadas al modelo.** HTTP429 es un rechazo observado, "
-            "no prueba por si solo su origen en APIM; HTTP403 no confirma cuota agotada. "
+            "**API Type a2a: limites de peticiones a agentes (request-rate-limit).** "
+            "Sus HTTP429 se clasifican por tipo de API, no por inspeccion de la policy. "
+            "No incluye llamadas HTTP al modelo; HTTP403 no confirma cuota agotada. "
             "**Modelo solo filtra tokens.** Identidades sin correspondencia permanecen visibles "
             "con All; la atribucion desde metricas es inferida para el rango seleccionado."
         )
@@ -432,7 +557,7 @@ def access_panels():
     for index, (title, expression, unit) in enumerate(
         (
             ("Peticiones A2A observadas", "Peticiones", "short"),
-            ("Respuestas HTTP429", "HTTP429", "short"),
+            ("HTTP429 agentes - request-rate-limit", "HTTP429", "short"),
             ("Porcentaje HTTP429 observado", "Porcentaje", "percent"),
             ("Otros fallos A2A (sin HTTP429)", "HTTP403 + OtrosFallos", "short"),
         )
@@ -458,7 +583,7 @@ def access_panels():
                 "Evolucion de respuestas A2A",
                 "timeseries",
                 request_base()
-                + '\n| extend Resultado = case(Code == "429", "HTTP429",'
+                + '\n| extend Resultado = case(Code == "429", "request-rate-limit (429)",'
                 + ' Code == "403", "HTTP403 (causa sin confirmar)",'
                 + ' Successful, "Correctas", "Otros fallos")'
                 + "\n| summarize Peticiones = count() by bin(timestamp, $__interval), Resultado"
@@ -491,26 +616,303 @@ def access_panels():
     return panels
 
 
+def model_access_panels():
+    description = (
+        "Solo requests POST con API Type=http, considerados modelo en este entorno. "
+        "HTTP429 se clasifica como llm-rate-limit por convencion, no por LastError. "
+        "Filtros: servicio, producto y subscription. Agente, identidad y Modelo no filtran "
+        "estas peticiones; las dimensiones ausentes no se infieren desde tokens."
+    )
+    panels = [
+        note(
+            "**API Type http: limites de tokens del modelo (llm-rate-limit).** "
+            "Clasificacion por convencion de este entorno, no confirmacion de policy. "
+            "**Solo filtran servicio, producto y subscription.** "
+            "Si faltan producto/subscription quedan como (sin dimension): usa All para verlos. "
+            "La tabla de contexto ignora esos dos filtros para detectar cobertura ausente. "
+            "No sumar llamadas al agente y al modelo como si fueran solicitudes de usuario unicas."
+        )
+    ]
+    for index, (title, expression, unit) in enumerate(
+        (
+            ("Peticiones HTTP al modelo observadas", "Peticiones", "short"),
+            ("HTTP429 modelo - llm-rate-limit", "HTTP429", "short"),
+            ("Porcentaje HTTP429 del modelo", "Porcentaje", "percent"),
+            ("HTTP403 del modelo - causa sin confirmar", "HTTP403", "short"),
+        )
+    ):
+        panels.append(
+            panel(
+                title,
+                "stat",
+                model_request_base() + request_summary() + f"\n| project Valor = {expression}",
+                index * 6,
+                3,
+                6,
+                4,
+                description + " Porcentaje = HTTP429 / peticiones HTTP, no peticiones A2A.",
+                unit,
+            )
+        )
+    panels.extend(
+        [
+            panel(
+                "Evolucion de respuestas del modelo",
+                "timeseries",
+                model_request_base()
+                + '\n| extend Resultado = case(Code == "429", "llm-rate-limit (429)",'
+                + ' Code == "403", "HTTP403 (causa sin confirmar)",'
+                + ' Successful, "Correctas", "Otros fallos")'
+                + "\n| summarize Peticiones = count() by bin(timestamp, $__interval), Resultado"
+                + "\n| order by timestamp asc",
+                0,
+                7,
+                12,
+                8,
+                description,
+            ),
+            panel(
+                "HTTP429 por tipo de limite",
+                "timeseries",
+                "union ("
+                + filtered(raw_requests(), MODEL_REQUEST_DIMENSIONS)
+                + "),\n("
+                + filtered(raw_requests("http"), MODEL_REQUEST_DIMENSIONS)
+                + ')\n| summarize HTTP429 = countif(Code == "429")'
+                + " by bin(timestamp, $__interval), LimitType\n| order by timestamp asc",
+                12,
+                7,
+                12,
+                8,
+                "Series separadas: a2a=request-rate-limit, http=llm-rate-limit. "
+                "Solo servicio, producto y subscription para comparar ambas capas "
+                "con los mismos filtros. No correlaciona ni deduplica llamadas entre capas.",
+            ),
+            panel(
+                "Modelo: peticiones y llm-rate-limit por API y subscription",
+                "table",
+                model_request_base()
+                + request_summary(
+                    ("service", "api", "ApiType", "LimitType", "product", "subscriptionId")
+                )
+                + "\n| top 1000 by HTTP429 desc",
+                0,
+                15,
+                24,
+                9,
+                description + " Representadas pondera itemCount; no se extrapolan los HTTP429. "
+                "Maximo 1000 filas.",
+            ),
+            panel(
+                "Contexto y sampling de requests HTTP",
+                "table",
+                model_request_base(("service",))
+                + "\n| summarize Observadas = count(), Representadas = sum(Represented),"
+                + f' SinProducto = countif(product == "{MISSING}"),'
+                + f' SinSubscription = countif(subscriptionId == "{MISSING}"),'
+                + " ConSampling = countif(Represented > 1) by service, api"
+                + "\n| order by Observadas desc",
+                0,
+                24,
+                24,
+                8,
+                "Solo filtra servicio. Ignora producto, subscription, agente, identidad y modelo "
+                "para mostrar llamadas HTTP sin contexto que esos filtros ocultarian. "
+                "Las llamadas sin subscription no pueden asignarse automaticamente a un producto.",
+            ),
+        ]
+    )
+    return panels
+
+
 def product_comparison():
     return (
         request_context()
         + "let RequestsByProduct = "
         + filtered("AgentRequests", REQUEST_DIMENSIONS)
         + request_summary(("service", "product"))
-        + ";\nlet TokensByProduct = "
+        + ";\nlet ModelRequestsByProduct = "
+        + model_request_base()
+        + request_summary(("service", "product"))
+        + "\n| project service, product, PeticionesModelo = Peticiones,"
+        + " LLMRateLimit429 = HTTP429, HTTP403Modelo = HTTP403,"
+        + " PorcentajeModelo = Porcentaje, RepresentadasModelo = Representadas;"
+        + "\nlet TokensByProduct = "
         + base()
         + '\n| summarize Total = sumif(Tokens, name == "Total Tokens"),'
         + ' Entrada = sumif(Tokens, name == "Prompt Tokens"),'
         + ' Salida = sumif(Tokens, name == "Completion Tokens")'
         + " by service, product;"
-        + "\nRequestsByProduct\n| join kind=fullouter TokensByProduct on service, product"
+        + "\nlet AccessByProduct = RequestsByProduct"
+        + "\n| join kind=fullouter ModelRequestsByProduct on service, product"
+        + "\n| project service = coalesce(service, service1),"
+        + "\n    product = coalesce(product, product1),"
+        + "\n    Peticiones, RequestRateLimit429 = HTTP429, HTTP403, Porcentaje,"
+        + " Representadas, Inferidas, SinIdentidad,"
+        + " PeticionesModelo, LLMRateLimit429, HTTP403Modelo,"
+        + " PorcentajeModelo, RepresentadasModelo;"
+        + "\nAccessByProduct\n| join kind=fullouter TokensByProduct on service, product"
         + "\n| project service = coalesce(service, service1),"
         + "\n    product = coalesce(product, product1),"
         + "\n    Peticiones = coalesce(Peticiones, long(0)),"
-        + " HTTP429 = coalesce(HTTP429, long(0)), HTTP403 = coalesce(HTTP403, long(0)),"
-        + "\n    Porcentaje, Representadas, Inferidas, SinIdentidad, Entrada, Salida, Total"
+        + " RequestRateLimit429 = coalesce(RequestRateLimit429, long(0)),"
+        + " HTTP403 = coalesce(HTTP403, long(0)),"
+        + "\n    PeticionesModelo = coalesce(PeticionesModelo, long(0)),"
+        + " LLMRateLimit429 = coalesce(LLMRateLimit429, long(0)),"
+        + " HTTP403Modelo = coalesce(HTTP403Modelo, long(0)),"
+        + "\n    Porcentaje, PorcentajeModelo, Representadas, RepresentadasModelo,"
+        + " Inferidas, SinIdentidad, Entrada, Salida, Total"
         + "\n| order by Peticiones desc"
     )
+
+
+def error_panels():
+    physical = (
+        "union ("
+        + filtered(raw_requests("a2a"), MODEL_REQUEST_DIMENSIONS)
+        + "),\n("
+        + model_request_base()
+        + ")"
+    )
+    logical_description = (
+        "Invocaciones unicas exactas por (service, invocation_id): union de fallos HTTP A2A "
+        "y excepciones finales agent_invocation_failed v1, incluso bajo SSE HTTP200. "
+        "La excepcion tiene prioridad para clasificar el origen. No suma requests del modelo, "
+        "reintentos ni model_call_id. Sin ID/servicio no se cuenta: consultar calidad. "
+        "Filtros de contexto A2A, sin Modelo; sin raiz conserva metadatos directos."
+    )
+    panels = [
+        note(
+            "**Errores: intentos fisicos != invocaciones impactadas.** HTTP429 fisicos por capa "
+            "usan solo servicio/producto/subscription; no prueban una policy ni cuota. "
+            "Los fallos logicos usan filtros A2A excepto Modelo. Se cuentan por servicio + "
+            "invocation_id, nunca por ID de llamada al modelo. **Sin excepciones significa "
+            "ningun fallo instrumentado observado, no exito demostrado**: configurar exportador "
+            "Application Insights exceptions y cabeceras APIM. La correlacion puede llegar tarde "
+            "o quedar fuera del intervalo; revisar cobertura, sampling e IDs ausentes."
+        )
+    ]
+    for index, (title, query, description) in enumerate(
+        (
+            (
+                "HTTP429 fisicos A2A - no invocaciones",
+                filtered(raw_requests("a2a"), MODEL_REQUEST_DIMENSIONS)
+                + '\n| summarize HTTP429 = countif(Code == "429")',
+                "Filas requests A2A POST observadas, no unicos ni extrapolacion por sampling. "
+                "Solo servicio/producto/subscription; convencion request-rate-limit.",
+            ),
+            (
+                "HTTP429 fisicos modelo - no invocaciones",
+                model_request_base() + '\n| summarize HTTP429 = countif(Code == "429")',
+                "Filas requests HTTP POST observadas, incluidos intentos/reintentos. "
+                "Solo servicio/producto/subscription; convencion llm-rate-limit. "
+                "Nunca se suman a invocaciones impactadas.",
+            ),
+            (
+                "Excepciones finales observadas - no unicos",
+                final_failure_base() + "\n| summarize ExcepcionesFinales = count()",
+                "Eventos exceptions v1 de ejecuciones finales fallidas, no llamadas al modelo "
+                "ni intentos. Incluye fallos no429 y sin clave de correlacion. "
+                "Cero no demuestra exito ni que el exportador este configurado.",
+            ),
+            (
+                "Invocaciones impactadas unicas",
+                impacted_invocations() + "\n| summarize Invocaciones = count()",
+                logical_description,
+            ),
+        )
+    ):
+        panels.append(panel(title, "stat", query, index * 6, 3, 6, 4, description))
+    panels.extend(
+        [
+            panel(
+                "HTTP429 fisicos por capa - intentos",
+                "timeseries",
+                physical
+                + '\n| summarize HTTP429 = countif(Code == "429")'
+                + "\n    by bin(timestamp, $__interval), ApiType"
+                + "\n| order by timestamp asc",
+                0,
+                7,
+                12,
+                8,
+                "Series fisicas separadas a2a/http. Solo servicio/producto/subscription. "
+                "No sumar capas para obtener invocaciones; no clasifica cuota.",
+            ),
+            panel(
+                "Invocaciones impactadas por origen",
+                "timeseries",
+                impacted_invocations()
+                + "\n| summarize Invocaciones = count()"
+                + "\n    by bin(timestamp, $__interval), ErrorOrigin"
+                + "\n| order by timestamp asc",
+                12,
+                7,
+                12,
+                8,
+                logical_description + " http_a2a = fallo HTTP sin excepcion clasificada. "
+                "El instante de la excepcion prevalece cuando ambas fuentes existen.",
+            ),
+            panel(
+                "Fallos unicos por contexto, origen y causa",
+                "table",
+                impacted_invocations()
+                + "\n| summarize Invocaciones = count() by "
+                + ", ".join(REQUEST_DIMENSIONS)
+                + ", ErrorOrigin, ErrorKind, FailureSource, RootCode, UpstreamStatus, Correlation"
+                + "\n| top 1000 by Invocaciones desc",
+                0,
+                15,
+                24,
+                9,
+                logical_description
+                + " ErrorKind procede de la excepcion; quota exige evidencia explicita del agente. "
+                "HTTP403 solo es estado, no cuota. Maximo 1000 grupos.",
+            ),
+            panel(
+                "Cobertura de excepciones finales y correlacion",
+                "table",
+                final_failure_base()
+                + "\n| summarize Excepciones = count(),"
+                + "\n    SinInvocationId = countif(isempty(InvocationId)),"
+                + f'\n    SinServicio = countif(service == "{MISSING}"),'
+                + '\n    Correlacionadas = countif(Correlation == "raiz A2A exacta"),'
+                + '\n    BajoHTTP200 = countif(RootCode == "200"),'
+                + "\n    ConSampling = countif(Represented > 1),"
+                + "\n    Representadas = sum(Represented)"
+                + "\n    by Correlation, CorrelationSource"
+                + "\n| order by Excepciones desc",
+                0,
+                24,
+                12,
+                9,
+                "Filas de excepciones antes de deduplicar, con filtros A2A salvo Modelo. "
+                "Sin ID/servicio se muestran, pero no se colapsan como una sola invocacion "
+                "ni se incluyen en el KPI unico. Sin raiz no significa sin fallo: la peticion "
+                "puede llegar tarde o estar fuera de rango. Tabla vacia no prueba exito.",
+            ),
+            panel(
+                "Calidad de claves de fallos HTTP A2A",
+                "table",
+                request_base()
+                + "\n| where not(Successful) or toint(Code) >= 400"
+                + "\n| summarize FallosHTTPObservados = count(),"
+                + "\n    SinInvocationId = countif(isempty(InvocationId)),"
+                + f'\n    SinServicio = countif(service == "{MISSING}"),'
+                + "\n    ConSampling = countif(Represented > 1)"
+                + "\n    by service"
+                + "\n| order by FallosHTTPObservados desc",
+                12,
+                24,
+                12,
+                9,
+                "Filas fisicas fallidas A2A antes de deduplicar. Sin ID o servicio no entra "
+                "en invocaciones unicas: volumen incompleto, no cero fallos. "
+                "Modelo no filtra. HTTP200 successful no descubre FAILED de SSE.",
+            ),
+        ]
+    )
+    return panels
 
 
 def product_panels():
@@ -519,7 +921,8 @@ def product_panels():
             "**Consumo y acceso por producto/subscription.** Cada fuente se agrega antes "
             "de cruzarla; no se multiplican peticiones por filas de tokens. "
             "Tokens ausentes quedan como Sin datos, no cero. El filtro Modelo solo afecta "
-            "al consumo. Product Name de requests debe coincidir con product de customMetrics."
+            "al consumo. Las columnas HTTP del modelo ignoran agente e identidad. "
+            "Product Name de requests debe coincidir con product de customMetrics."
         ),
         top_bar("product", "Consumo por producto - Top N", 0, 3),
         top_bar("model", "Consumo por modelo - Top N", 12, 3),
@@ -531,8 +934,11 @@ def product_panels():
             11,
             24,
             9,
-            "Join fullouter de agregados unicos por servicio y producto. "
+            "Fullouter de tres agregados unicos por servicio/producto: A2A, HTTP y tokens. "
             "Mantiene productos sin tokens o sin peticiones. Porcentaje = HTTP429 / Peticiones. "
+            "Peticiones/RequestRateLimit429 son A2A; PeticionesModelo/LLMRateLimit429 son HTTP. "
+            "PorcentajeModelo usa solo el denominador HTTP; no se mezclan capas. "
+            "Las columnas del modelo solo filtran servicio, producto y subscription. "
             "Modelo filtra solo Entrada/Salida/Total, nunca el denominador de peticiones. "
             "Sin correspondencia de identidad no se inventa un usuario.",
         ),
@@ -549,8 +955,8 @@ def overview_panels():
     panels = [
         note(
             "**Consumo observado, no facturacion.** Total = `Total Tokens`; "
-            "entrada/salida se muestran por separado. Modelo solo filtra consumo; los demas "
-            "filtros son comunes a todas las secciones. "
+            "entrada/salida se muestran por separado. Modelo solo filtra consumo; "
+            "el acceso HTTP al modelo solo filtra servicio, producto y subscription. "
             "Comprueba frescura y calidad antes de interpretar un cero como ausencia de consumo."
         ),
         token_stat("Total Tokens", "Tokens totales", 0),
@@ -761,7 +1167,8 @@ def organization_panels():
         note(
             "**Atribucion del consumo, no facturacion.** Compara agentes y departamentos; "
             "los equipos se distinguen por departamento. Las tablas muestran hasta 1000 filas. "
-            "Top N solo limita los graficos, no las tablas."
+            "Top N solo limita los graficos, no las tablas. "
+            "Las tablas de HTTP429 solo incluyen A2A (request-rate-limit), no limites LLM."
         ),
         top_bar("agent", "Consumo por agente - Top N", 0, 3),
         top_bar("department", "Consumo por departamento - Top N", 12, 3),
@@ -787,6 +1194,7 @@ def user_panels():
             "**Vista con identificadores de usuario: restringe su acceso.** "
             "Permite identificar concentracion de consumo y atribucion por organizacion. "
             "Los tokens y las peticiones se calculan por separado. Las tablas de acceso "
+            "y rankings de HTTP429 solo incluyen A2A (request-rate-limit), no limites LLM; "
             "identifican atribucion inferida o ausente. Top N se calcula para todo el rango."
         ),
         panel(
@@ -891,13 +1299,15 @@ def dashboard(uid, title, panels):
         "uid": uid,
         "title": title,
         "description": (
-            "Consumo de tokens y acceso A2A/APIM desde customMetrics y requests "
-            "de Application Insights. HTTP429 observado, sin atribuir su causa automaticamente."
+            "Consumo de tokens, acceso A2A/APIM y fallos finales desde customMetrics, "
+            "requests y exceptions "
+            "de Application Insights. HTTP429 clasificado por API Type: "
+            "a2a=request-rate-limit; http=llm-rate-limit, segun convencion del entorno."
         ),
         "tags": ["ai-token-consumption", "finops", "azure-monitor"],
         "editable": True,
         "schemaVersion": 39,
-        "version": 2,
+        "version": 4,
         "timezone": "utc",
         "time": {"from": "now-24h", "to": "now"},
         "refresh": "5m",
@@ -915,6 +1325,8 @@ def build_dashboards():
     for title, items in (
         ("Resumen de consumo", overview_panels()),
         ("Acceso y rechazos A2A", access_panels()),
+        ("Acceso al modelo y limites LLM", model_access_panels()),
+        ("Errores fisicos e invocaciones impactadas", error_panels()),
         ("Productos y subscriptions", product_panels()),
         ("Reparto organizativo", organization_panels()),
         ("Usuarios", user_panels()),

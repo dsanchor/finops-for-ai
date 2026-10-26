@@ -76,6 +76,7 @@ elif not any(
         "account show", "extension show", "resource show", "provider register", "group create",
         "containerapp create", "containerapp update", "containerapp identity assign",
         "containerapp ingress enable", "containerapp revision set-mode", "role assignment create",
+        "containerapp secret set",
     )
 ):
     sys.exit("Unexpected Azure command: " + " ".join(args))
@@ -111,6 +112,11 @@ def deployment_cli(tmp_path):
         "CUSTOMER_OPENAI_BASE_URL",
         "FOUNDRY_PROJECT_ENDPOINT",
         "FAIL_COMMAND",
+        "MAX_RETRIES",
+        "RISK_MAX_RETRIES",
+        "CUSTOMER_MAX_RETRIES",
+        "APPLICATIONINSIGHTS_CONNECTION_STRING",
+        "APIM_SERVICE_ID",
     ):
         env.pop(key, None)
     return env
@@ -148,6 +154,7 @@ def test_deploys_both_agents_with_managed_identities(deployment_cli):
         assert call[call.index("--max-replicas") + 1] == "1"
         assert f"{prefix}_AUTH_MODE=managed_identity" in call
         assert f"{prefix}_MANAGED_IDENTITY_CLIENT_ID=" in call
+        assert f"{prefix}_MAX_RETRIES=0" in call
         assert f"{prefix}_OPENAI_BASE_URL={deployment_cli['OPENAI_BASE_URL']}" in call
         assert not any("FOUNDRY_PROJECT_ENDPOINT" in argument for argument in call)
         expected_url = f"https://{name}.example.azurecontainerapps.io"
@@ -180,6 +187,27 @@ def test_rerun_reuses_resources_and_roles(deployment_cli):
     assert sum(call[1:4] == ["containerapp", "identity", "assign"] for call in calls) == 2
     updates = [call for call in calls if call[1:3] == ["containerapp", "update"]]
     assert any(deployment_cli["CUSTOMER_IMAGE"] in call for call in updates)
+
+
+def test_exception_export_uses_container_app_secret_and_retries_override(deployment_cli):
+    deployment_cli["APPLICATIONINSIGHTS_CONNECTION_STRING"] = "test-connection-string"
+    deployment_cli["APIM_SERVICE_ID"] = "finops4ai"
+    deployment_cli["RISK_MAX_RETRIES"] = "1"
+    for _ in range(2):
+        result = run_deployment(deployment_cli)
+        assert result.returncode == 0, result.stderr
+        assert "test-connection-string" not in result.stdout + result.stderr
+    calls = commands(deployment_cli)
+    for prefix in ("RISK", "CUSTOMER"):
+        configured = [call for call in calls if f"{prefix}_OPENAI_BASE_URL=" in " ".join(call)]
+        for call in configured:
+            assert "APIM_SERVICE_ID=finops4ai" in call
+            assert (
+                "APPLICATIONINSIGHTS_CONNECTION_STRING=secretref:applicationinsights-connection-string"
+                in call
+            )
+            assert f"{prefix}_MAX_RETRIES={'1' if prefix == 'RISK' else '0'}" in call
+    assert sum(call[1:4] == ["containerapp", "secret", "set"] for call in calls) == 2
 
 
 @pytest.mark.parametrize("customer_override", [None, "", "https://customer.example/openai/v1"])

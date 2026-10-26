@@ -7,7 +7,7 @@ import time
 from argparse import Namespace
 from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -41,14 +41,14 @@ from agent_framework import (
 from agent_framework.openai import OpenAIChatClient
 from azure.core.credentials import AccessToken
 from azure.core.credentials_async import AsyncTokenCredential
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 from pydantic import ValidationError
 from starlette.routing import Route
 
 from agents.config import Settings
 from agents.profiles import PROFILES
 from agents.server import UsageExecutor, build_agent, create_app, credential_for
-from clients.common import main, run, stream_request
+from clients.common import AgentTaskFailure, main, run, stream_request
 from clients.identities import load_identities
 from clients.workloads import random_prompt, with_documents
 
@@ -62,6 +62,14 @@ def settings(kind="risk", **overrides) -> Settings:
         public_url=overrides.pop("public_url", "http://localhost:8001"),
         **overrides,
     )
+
+
+def without_correlation(headers):
+    return {
+        name: value
+        for name, value in headers.items()
+        if name not in ("X-Invocation-Id", "X-Model-Call-Id")
+    }
 
 
 class FakeChatClient(BaseChatClient):
@@ -87,6 +95,14 @@ class FakeChatClient(BaseChatClient):
         async def updates() -> AsyncIterator[ChatResponseUpdate]:
             if prompt == "FAIL":
                 raise RuntimeError("Synthetic model failure")
+            if prompt == "RATE_LIMIT":
+                raise RateLimitError(
+                    "private upstream body",
+                    response=httpx.Response(
+                        429, request=httpx.Request("POST", "https://model.example/responses")
+                    ),
+                    body=None,
+                )
             for text in ("Respuesta: ", prompt):
                 yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text)])
                 await asyncio.sleep(0.1)
@@ -204,6 +220,10 @@ async def test_concurrent_requests_are_isolated(live_agent):
             await client.close()
     assert responses == [f"Respuesta: Consulta {i}" for i in range(8)]
     assert sorted(model.prompts) == [f"Consulta {i}" for i in range(8)]
+    for name in ("X-Invocation-Id", "X-Model-Call-Id"):
+        identifiers = [kwargs["extra_headers"][name] for kwargs in model.request_kwargs.values()]
+        assert len(set(identifiers)) == 8
+        assert all(str(UUID(value)) == value for value in identifiers)
 
 
 async def test_model_headers_are_isolated_per_request(live_agent, caplog):
@@ -223,7 +243,8 @@ async def test_model_headers_are_isolated_per_request(live_agent, caplog):
                 assert await stream_request(client, prompt) == f"Respuesta: {prompt}"
             finally:
                 await client.close()
-        assert model.request_kwargs[prompt].get("extra_headers", {}) == model_headers
+        forwarded = model.request_kwargs[prompt].get("extra_headers", {})
+        assert without_correlation(forwarded) == model_headers
 
     masks = (0, 1, 2, 4, 8, 16, 15, 31)
     await asyncio.gather(
@@ -259,7 +280,7 @@ async def test_model_headers_are_isolated_per_request(live_agent, caplog):
         json.dumps(
             {
                 name: value
-                for name, value in kwargs.get("extra_headers", {}).items()
+                for name, value in without_correlation(kwargs.get("extra_headers", {})).items()
                 if name != "Ocp-Apim-Subscription-Key"
             },
             sort_keys=True,
@@ -467,10 +488,145 @@ async def test_model_failure_is_not_success(live_agent):
     async with httpx.AsyncClient(timeout=10) as http:
         client = await ClientFactory(ClientConfig(httpx_client=http)).create_from_url(url)
         try:
-            with pytest.raises(RuntimeError, match="TASK_STATE_FAILED.*Synthetic model failure"):
+            with pytest.raises(RuntimeError, match="TASK_STATE_FAILED.*agent execution failed"):
                 await stream_request(client, "FAIL")
         finally:
             await client.close()
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "expected"),
+    [
+        (400, None, "invalid_request"),
+        (401, None, "authentication"),
+        (403, None, "forbidden"),
+        (403, "QuotaExceeded", "quota"),
+        (429, None, "rate_limit"),
+        (429, "insufficient_quota", "quota"),
+        (500, None, "server_error"),
+    ],
+)
+@pytest.mark.parametrize("kind", ["risk", "customer"])
+@pytest.mark.parametrize("retries", [0, 2])
+async def test_model_http_failures_are_safe_correlated_failed_tasks(
+    kind, retries, status, code, expected, caplog
+):
+    caplog.set_level(logging.INFO)
+    assert settings(kind).max_retries == 0
+    config = settings(kind, max_retries=retries)
+    invocation = str(uuid4())
+    captured = []
+
+    def respond(request):
+        captured.append(request)
+        return httpx.Response(
+            status,
+            headers={"Retry-After": "0.001"},
+            json={"error": {"message": "private-upstream-body", "code": code}},
+        )
+
+    context = RequestContext(
+        call_context=ServerCallContext(
+            state={
+                "headers": {
+                    "X-Invocation-Id": invocation,
+                    "X-Apim-Service-Id": "fixture-apim",
+                    "X-Agent": "gateway-agent",
+                    "Ocp-Apim-Subscription-Key": "private-subscription-key",
+                }
+            }
+        ),
+        request=SendMessageRequest(
+            message=A2AMessage(
+                message_id=str(uuid4()), role=Role.ROLE_USER, parts=[A2APart(text="Hola")]
+            )
+        ),
+    )
+    queue = CollectingEventQueue()
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http,
+        AsyncOpenAI(
+            api_key="test-model-credential",
+            base_url=config.openai_base_url,
+            http_client=http,
+            max_retries=config.max_retries,
+        ) as sdk,
+    ):
+        model = OpenAIChatClient(model=config.model, async_client=sdk)
+        await UsageExecutor(build_agent(config, model), config, context).execute(context, queue)
+    attempts = retries + 1 if status == 429 or status >= 500 else 1
+    assert len(captured) == attempts
+    assert all(request.headers["X-Invocation-Id"] == invocation for request in captured)
+    assert len({request.headers["X-Model-Call-Id"] for request in captured}) == 1
+    statuses = [e for e in queue.events if isinstance(e, TaskStatusUpdateEvent)]
+    failed = [e for e in statuses if e.status.state == TaskState.TASK_STATE_FAILED]
+    assert len(failed) == 1
+    assert statuses[-1] is failed[0]
+    details = failed[0].metadata
+    assert details["invocation_id"] == invocation
+    assert details["model_call_id"] == captured[0].headers["X-Model-Call-Id"]
+    assert details["error_origin"] == "model"
+    assert details["error_kind"] == expected
+    assert details["upstream_status"] == status
+    assert details["partial_output"] is False
+    records = [r for r in caplog.records if r.name == "agents.telemetry"]
+    assert len(records) == 1
+    assert records[0].invocation_id == invocation
+    assert records[0].task_id == failed[0].task_id
+    assert records[0].service == "fixture-apim"
+    assert "private-subscription-key" not in caplog.text + str(queue.events)
+    assert "private-upstream-body" not in caplog.text + str(queue.events)
+
+
+async def test_failed_task_inside_http200_retains_error_metadata(live_agent):
+    url, _, _ = live_agent
+    responses = []
+
+    async def capture_response(response):
+        responses.append((response.request.method, response.status_code))
+
+    invocation = str(uuid4())
+    async with httpx.AsyncClient(
+        timeout=10,
+        headers={"X-Invocation-Id": invocation},
+        event_hooks={"response": [capture_response]},
+    ) as http:
+        client = await ClientFactory(ClientConfig(httpx_client=http)).create_from_url(url)
+        try:
+            with pytest.raises(AgentTaskFailure) as result:
+                await stream_request(client, "RATE_LIMIT")
+            assert result.value.metadata["invocation_id"] == invocation
+            assert result.value.metadata["error_origin"] == "model"
+            assert result.value.metadata["upstream_status"] == 429
+            assert "private upstream body" not in str(result.value)
+        finally:
+            await client.close()
+    assert ("POST", 200) in responses
+
+
+async def test_failed_client_result_records_structured_metadata(live_agent, tmp_path):
+    _, _, config = live_agent
+    output = tmp_path / "failed.jsonl"
+    args = Namespace(
+        seed=1,
+        identities_file=None,
+        identity_mode="sequence",
+        document_sections=1,
+        random=False,
+        prompt="RATE_LIMIT",
+        document=[],
+        requests=1,
+        concurrency=1,
+        interval=0,
+        timeout=10,
+        output=output,
+    )
+    assert await run(args, config.kind) == 1
+    result = json.loads(output.read_text())
+    assert result["status"] == "failed"
+    assert result["error_details"]["error_origin"] == "model"
+    assert result["error_details"]["upstream_status"] == 429
+    assert result["error_details"]["invocation_id"]
 
 
 async def test_random_load_and_jsonl(live_agent, tmp_path, capsys):
@@ -491,7 +647,10 @@ async def test_random_load_and_jsonl(live_agent, tmp_path, capsys):
         output=output,
     )
     assert await run(args, config.kind) == 0
-    assert all(not kwargs.get("extra_headers") for kwargs in model.request_kwargs.values())
+    assert all(
+        not without_correlation(kwargs.get("extra_headers", {}))
+        for kwargs in model.request_kwargs.values()
+    )
     records = [json.loads(line) for line in output.read_text().splitlines()]
     assert len(records) == 4
     assert all(r["status"] == "completed" for r in records)
@@ -574,7 +733,8 @@ async def test_client_csv_headers_reach_model(
         )
         assert await run(args, config.kind) == 0
         assert [
-            model.request_kwargs[f"CSV request {index}"]["extra_headers"] for index in range(8)
+            without_correlation(model.request_kwargs[f"CSV request {index}"]["extra_headers"])
+            for index in range(8)
         ] == expected
         assert all("X-Agent" not in headers for headers in expected)
         card_headers = [headers for method, headers in captured_requests if method == "GET"]

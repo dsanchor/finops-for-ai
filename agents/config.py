@@ -3,7 +3,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 AgentKind = Literal["risk", "customer"]
 
@@ -19,8 +19,10 @@ class Settings(BaseModel):
     managed_identity_client_id: str | None = None
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
     request_timeout: float = Field(default=180, gt=0)
-    max_retries: int = Field(default=2, ge=0)
+    max_retries: int = Field(default=0, ge=0)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    applicationinsights_connection_string: SecretStr | None = Field(default=None, repr=False)
+    apim_service_id: str = ""
 
     @field_validator("openai_base_url")
     @classmethod
@@ -71,6 +73,8 @@ class Settings(BaseModel):
             "request_timeout",
             "max_retries",
             "log_level",
+            "applicationinsights_connection_string",
+            "apim_service_id",
         ):
             value = os.getenv(f"{prefix}_{field.upper()}", os.getenv(field.upper()))
             if value is not None and value.strip():

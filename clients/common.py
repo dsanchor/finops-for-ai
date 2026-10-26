@@ -17,6 +17,7 @@ from a2a.client.client import Client, ClientCallContext
 from a2a.client.errors import A2AClientError
 from a2a.types import Message, Part, Role, SendMessageRequest, TaskState
 from dotenv import load_dotenv
+from google.protobuf.json_format import MessageToDict
 
 from agents.config import AgentKind
 from clients.identities import load_identities
@@ -37,6 +38,13 @@ class Result:
     latency_seconds: float
     first_text_seconds: float | None
     error: str | None = None
+    error_details: dict[str, object] | None = None
+
+
+class AgentTaskFailure(RuntimeError):
+    def __init__(self, message: str, metadata: dict[str, object]):
+        super().__init__(message)
+        self.metadata = metadata
 
 
 async def stream_request(
@@ -91,7 +99,15 @@ async def stream_request(
                 TaskState.TASK_STATE_WORKING,
             }:
                 detail = " ".join(p.text for p in status.message.parts if p.HasField("text"))
-                raise RuntimeError(f"A2A task ended as {TaskState.Name(status.state)}: {detail}")
+                metadata = (
+                    event.status_update.metadata
+                    if event_type == "status_update"
+                    else event.task.metadata
+                )
+                raise AgentTaskFailure(
+                    f"A2A task ended as {TaskState.Name(status.state)}: {detail}",
+                    MessageToDict(metadata),
+                )
     if not completed:
         raise RuntimeError("A2A stream ended without a completed task")
     text = "".join(artifacts.values())
@@ -153,6 +169,7 @@ async def run(args: argparse.Namespace, kind: AgentKind) -> int:
                     print(text, end="", flush=True)
 
             error = None
+            error_details = None
             text = ""
             try:
                 async with asyncio.timeout(args.timeout):
@@ -162,6 +179,8 @@ async def run(args: argparse.Namespace, kind: AgentKind) -> int:
             except (A2AClientError, httpx.HTTPError, TimeoutError, RuntimeError) as exc:
                 logger.error("Request %s failed: %s", index, exc)
                 error = f"{type(exc).__name__}: {exc}"
+                if isinstance(exc, AgentTaskFailure):
+                    error_details = exc.metadata
                 text = "".join(chunks)
             if args.random or args.requests > 1:
                 label = "Respuesta parcial (error)" if error else "Respuesta"
@@ -181,6 +200,7 @@ async def run(args: argparse.Namespace, kind: AgentKind) -> int:
                 latency_seconds=round(time.perf_counter() - start, 4),
                 first_text_seconds=round(first_text, 4) if first_text is not None else None,
                 error=error,
+                error_details=error_details,
             )
             results.append(result)
             record = json.dumps(asdict(result))

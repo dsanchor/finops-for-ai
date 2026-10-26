@@ -10,7 +10,9 @@ dependencies = [
     "a2a-sdk[http-server]==1.2.3",
     "azure-core[aio]>=1.31,<2",
     "azure-identity>=1.25,<2",
+    "azure-monitor-opentelemetry-exporter>=1.0.0b35,<2",
     "httpx>=0.28,<1",
+    "opentelemetry-sdk>=1.35,<2",
     "python-dotenv>=1,<2",
     "uvicorn>=0.35,<1",
 ]

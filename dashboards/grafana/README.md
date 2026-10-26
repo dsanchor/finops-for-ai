@@ -1,8 +1,8 @@
-# Dashboard unificado de consumo y acceso A2A
+# Dashboard unificado de consumo y acceso a agentes/modelos
 
 Un unico [dashboard importable](tokens-consumption.json) para Grafana con el datasource **Azure Monitor**,
 consultando **Logs** en el recurso **Application Insights**, con las tablas
-`customMetrics` y `requests`. No usa el servicio Metrics del datasource ni consulta
+`customMetrics`, `requests` y `exceptions`. No usa el servicio Metrics del datasource ni consulta
 `AppMetrics` en un workspace.
 
 ## Secciones incluidas
@@ -10,14 +10,16 @@ consultando **Logs** en el recurso **Application Insights**, con las tablas
 | Seccion | Preguntas que responde |
 | --- | --- |
 | Resumen de consumo | Cuanto se consume, cuanto es entrada/salida, como evoluciona y cuantos agentes y entidades tienen metricas. |
-| Acceso y rechazos A2A | Cuantas peticiones se observan, cuantas reciben HTTP429, su porcentaje y que agentes o subscriptions concentran esas respuestas. |
-| Productos y subscriptions | Como se distribuyen tokens y peticiones por producto, subscription y modelo. |
+| Acceso y rechazos A2A | Peticiones a agentes y HTTP429 clasificados como `request-rate-limit`. |
+| Acceso al modelo y limites LLM | Peticiones HTTP al modelo y HTTP429 clasificados como `llm-rate-limit`, comparativa de ambas capas y cobertura de producto/subscription. |
+| Errores fisicos e invocaciones impactadas | Intentos HTTP429 por capa, excepciones finales de modelo/agente (tambien no429 y FAILED dentro de SSE HTTP200), invocaciones unicas y cobertura de correlacion. |
+| Productos y subscriptions | Tokens, peticiones A2A y peticiones HTTP por separado, con sus respectivos HTTP429 y porcentajes. |
 | Reparto organizativo | Que agentes, departamentos y equipos concentran consumo y respuestas HTTP429. |
 | Usuarios | Que usuarios concentran consumo o respuestas HTTP429, y a traves de que subscriptions. |
 | Calidad de datos | Si las metricas estan completas, que peticiones tienen identidad y si hay sampling. |
 
-Las seis secciones comparten un unico intervalo y conjunto de filtros, con las
-excepciones de modelo y cobertura de identidad indicadas mas abajo.
+Las ocho secciones comparten un unico intervalo. Los filtros disponibles se
+aplican segun el contexto de cada fuente, como se indica mas abajo.
 Estan organizadas en filas desplegables y se abren expandidas.
 No se repiten los KPI ni los graficos comunes a varias secciones.
 
@@ -29,9 +31,17 @@ No se repiten los KPI ni los graficos comunes a varias secciones.
   `total - entrada - salida`, filas sin `valueSum`, valores negativos y tokens
   sin alguna dimension; cobertura de identidad, origen de la atribucion y sampling.
 - **Acceso**: peticiones observadas, respuestas HTTP429, porcentaje HTTP429,
-  otros fallos, evolucion de resultados y tablas por agente/subscription.
+  otros fallos, evolucion de resultados y tablas por agente/subscription,
+  exclusivamente para A2A.
+- **Modelo**: peticiones HTTP, HTTP429 de tokens, porcentaje sobre peticiones
+  HTTP, HTTP403 sin causa confirmada, detalle por API/producto/subscription
+  y controles de contexto ausente y sampling. Una serie compara ambos tipos
+  de limite sin mezclar sus denominadores.
 - **Productos**: comparativa de peticiones, respuestas HTTP429 y tokens,
   consumo por producto/modelo y desglose de entrada/salida.
+- **Errores**: separa rechazos HTTP429 fisicos de invocaciones impactadas unicas,
+  desglosa origen/causa/estado HTTP y expone excepciones sin raiz o sin claves.
+  Los contadores fisicos no se suman al KPI de invocaciones.
 - **Organizacion**: rankings de agentes y departamentos, tabla de equipos
   identificados por `department + team`, evolucion, matriz de atribucion
   e impacto de respuestas HTTP429.
@@ -40,8 +50,11 @@ No se repiten los KPI ni los graficos comunes a varias secciones.
   tanto absolutas como porcentuales, con volumen minimo configurable.
 
 No se incluyen costes, presupuestos, cuota restante ni limites configurados.
-HTTP429 y HTTP403 son respuestas observadas: no demuestran por si solas que
-se haya ejecutado una politica concreta de throttling o cuota de APIM.
+La clasificacion de HTTP429 sigue la convencion solicitada para este entorno:
+`API Type=a2a` significa `request-rate-limit` y `API Type=http` significa
+`llm-rate-limit`. No se inspecciona la policy que produjo el rechazo; el tipo
+de API no demuestra tecnicamente su origen en APIM frente al backend.
+HTTP403 sigue sin etiquetarse como cuota confirmada.
 
 ## Importacion
 
@@ -79,10 +92,26 @@ se haya ejecutado una politica concreta de throttling o cuota de APIM.
    **Min. peticiones para ranking %** admite 1, 10, 50 o 100, con 10 por defecto,
    y se aplica a los rankings porcentuales de HTTP429.
    **Modelo (solo tokens)** no filtra peticiones: `requests` no contiene un modelo
-   fiable para estas llamadas A2A. En la comparativa de productos, los tokens
+   fiable para estas llamadas. En la comparativa de productos, los tokens
    respetan el modelo seleccionado y las peticiones siguen incluyendo todos los modelos.
-   Los controles de cobertura/sampling ignoran departamento, equipo, usuario y
+   Los paneles HTTP del modelo solo usan **servicio, producto y subscription**:
+   ignoran agente, departamento, equipo, usuario y modelo, porque esos datos
+   no estan garantizados en sus requests. La serie que compara los HTTP429
+   de ambas capas usa tambien esos tres filtros comunes.
+   Los controles A2A de cobertura/sampling ignoran departamento, equipo, usuario y
    modelo para no ocultar peticiones que no se puedan atribuir.
+   **Contexto y sampling de requests HTTP** solo filtra servicio, para exponer
+   producto/subscription ausentes incluso cuando los hayas filtrado.
+   Las opciones de producto/subscription incluyen registros exclusivamente HTTP
+   y no los restringen por el filtro de agente.
+   Las opciones de contexto incluyen tambien excepciones finales, aunque aun
+   no haya llegado su request A2A. Los errores logicos usan todos los filtros
+   de `REQUEST_DIMENSIONS` (servicio, agente, producto, subscription,
+   departamento, equipo y usuario), **nunca Modelo**, para no ocultar rechazos
+   directos del gateway de agentes. Sus paneles fisicos solo usan los tres
+   filtros comunes servicio/producto/subscription, igual que la comparativa HTTP.
+   Una excepcion sin producto/subscription permanece visible con **All**;
+   seleccionar un valor conocido la excluye si no existe raiz que lo aporte.
 7. Guarda el dashboard tras ajustar su configuracion.
 
 El JSON usa el formato clasico de dashboard (`schemaVersion: 39`, referencia
@@ -153,12 +182,25 @@ Las tablas de detalle estan limitadas a 1000 combinaciones, ordenadas por consum
 o por respuestas HTTP429 segun el panel. Si hay mas combinaciones, no representan
 todo el ambito; los KPI de resumen siguen consultando todas las filas seleccionadas.
 
-### Peticiones A2A y respuestas HTTP429/HTTP403
+### Clasificacion de peticiones y respuestas HTTP429/HTTP403
 
-Solo se incluyen registros de `requests` con `customDimensions["API Type"] = "a2a"`
-y `customDimensions["HTTP Method"] = "POST"`. Se excluyen descargas GET de la
-Agent Card y peticiones a las APIs de modelos. Son peticiones HTTP, no
-conversaciones ni tareas A2A unicas.
+Se incluyen registros de `requests` POST, separados por la clave exacta
+`customDimensions["API Type"]`, comparada sin distinguir mayusculas:
+
+| API Type | Capa | Clasificacion del HTTP429 |
+| --- | --- | --- |
+| `a2a` | Agentes | `request-rate-limit` |
+| `http` | Modelo | `llm-rate-limit` |
+
+Se excluyen otros tipos y las descargas GET de la Agent Card. Esta convencion
+supone que todas las APIs HTTP POST consultadas corresponden a modelos; revisala
+si incorporas otras APIs HTTP al mismo recurso de telemetria.
+El detalle del modelo conserva `API Name` como `api`; no lo confunde con el
+nombre del modelo/despliegue.
+Son peticiones HTTP, no conversaciones ni tareas A2A unicas. No se suman ambas
+capas para calcular solicitudes de usuario: un agente puede generar varias
+llamadas al modelo y un fallo del modelo no tiene por que propagarse como
+el mismo codigo HTTP en A2A.
 
 - **Peticiones**: `count()` de registros observados.
 - **HTTP429 / HTTP403**: registros con ese `resultCode`.
@@ -166,16 +208,18 @@ conversaciones ni tareas A2A unicas.
 - **OtrosFallos**: fallos distintos de HTTP429/HTTP403. El KPI general
   **Otros fallos A2A (sin HTTP429)** incluye tambien HTTP403.
 - **Porcentaje HTTP429**: `100 * HTTP429 / Peticiones`, nulo si no hay peticiones.
-  Tanto numerador como denominador son observados, sin ponderar por sampling.
+  Se calcula independientemente para A2A y HTTP: nunca se usa trafico A2A como
+  denominador de rechazos del modelo. Numerador y denominador son observados,
+  sin ponderar por sampling.
 - **Representadas**: suma de `itemCount` (1 si no se informa). Es el volumen
   representado por la telemetria, no un contador exacto del gateway.
 
 El panel de sampling compara observadas y representadas y cuenta registros
 con `itemCount > 1`. Si hay sampling, el porcentaje observado puede no coincidir
 con el del trafico completo. No se corrige automaticamente.
-Una respuesta HTTP429 puede proceder del gateway o de un backend; una HTTP403
-puede tener causas de autorizacion ademas de cuotas. Para distinguir politicas
-hace falta telemetria explicita del motivo del rechazo.
+Una respuesta HTTP429 puede proceder del gateway o de un backend; la etiqueta
+es una clasificacion por convencion, no una comprobacion de `LastError`.
+Una HTTP403 puede tener causas de autorizacion ademas de cuotas.
 
 ### Atribucion de peticiones sin multiplicar filas
 
@@ -184,6 +228,7 @@ Las dimensiones de `requests` se extraen asi:
 | Dimension | Clave de `customDimensions` |
 | --- | --- |
 | service | `Service ID` |
+| api | `API Name` |
 | agent | `gen_ai.agent.id` |
 | subscriptionId | `Subscription Name` |
 | product | `Product Name` |
@@ -194,7 +239,7 @@ metricas y `Product Name` con `product`. No es una garantia de APIM: nombre
 visible e ID pueden diferir. Si cambian, normaliza la emision o las consultas;
 no se intenta adivinar equivalencias.
 
-Para peticiones sin identidad completa se construye un mapa usando solamente
+Para peticiones **A2A** sin identidad completa se construye un mapa usando solamente
 `Total Tokens` del intervalo seleccionado. Se deduplican los contextos
 `department + team + user` y se agrega **una unica fila por
 `service + agent + subscriptionId`**, antes de hacer un `leftouter` con requests.
@@ -220,9 +265,94 @@ temporal puede cambiar su resultado. Para atribucion fiable, emite identidad
 directamente en cada registro de request desde APIM. Los paneles muestran
 cuantas peticiones se infirieron o carecen de identidad completa.
 
-La comparativa por producto agrega por separado tokens y peticiones antes de
-un `fullouter`; no une filas crudas de ambas tablas. Los tokens quedan nulos
-si no hay agregado de metricas para un producto con peticiones.
+En las peticiones **HTTP al modelo** no se infiere identidad desde tokens.
+Si faltan `Product Name`, `Subscription Name` o `gen_ai.agent.id`, siguen como
+`(sin dimension)`. El ejemplo HTTP sin producto/subscription se muestra con
+All; seleccionar un producto concreto lo excluye de los paneles filtrados,
+pero no del control de contexto HTTP. No se puede repartir ese rechazo entre
+usuarios o productos sin contexto adicional.
+
+La comparativa por producto agrega por separado A2A, HTTP y tokens antes de
+dos `fullouter`; no une filas crudas. `Peticiones` y `RequestRateLimit429`
+corresponden a agentes; `PeticionesModelo` y `LLMRateLimit429`, al modelo.
+`Porcentaje` y `PorcentajeModelo` tienen denominadores independientes.
+Las columnas HTTP del modelo ignoran filtros de agente/identidad, tambien
+en esta tabla. Los tokens quedan nulos si no hay agregado de metricas.
+
+### Errores finales dentro de A2A SSE HTTP200
+
+`requests` no detecta por si sola un `FAILED` enviado dentro de un stream SSE
+con HTTP200. La fila de errores consulta **`exceptions`**, no `traces` ni
+`customEvents`, y solo acepta:
+
+```text
+customDimensions.event = agent_invocation_failed
+customDimensions.schema_version = 1
+```
+
+El agente debe emitir una excepcion ERROR por ejecucion final fallida y
+configurar el exportador de Application Insights para generar registros reales
+en `exceptions` (no basta un log de texto). El contrato aporta `invocation_id`,
+`correlation_source` (`header` o `generated`), `service`, `agent`, `task_id`,
+`model_call_id`, `model`, `department`, `team`, `user`, `error_origin`
+(`model` o `agent`), `error_kind` y, solo si se conocen, `upstream_status`
+entero y `retry_after_seconds`. Sin identidad se usa `(sin dimension)`.
+Los agentes no aportan producto/subscription.
+
+`error_kind` distingue `rate_limit`, `quota`, `authentication`, `forbidden`,
+`invalid_request`, `not_found`, `timeout`, `connection`, `server_error`,
+`model_error` y `agent_error`. El dashboard conserva la clasificacion emitida:
+**quota exige evidencia explicita**, no se deduce de cualquier HTTP403.
+Tampoco conoce `LastError` de APIM ni demuestra que una policy concreta
+produjera un rechazo. Los errores no429 siguen incluidos.
+
+Para correlacionar, cada API A2A debe establecer en inbound **antes de `<base />`**
+`X-Invocation-Id = context.RequestId` y
+`X-Apim-Service-Id = context.Deployment.ServiceId`, sobrescribiendo valores
+del cliente. El agente recibe asi un servicio confiable; sin cabecera usa la
+configuracion opcional de servicio o `(sin dimension)` y genera UUID cuando no
+hay ID de invocacion. `agent` procede de `X-Agent` o del tipo configurado.
+`correlation_source=generated` puede identificar fallos de acceso directo sin raiz APIM.
+
+La correlacion es **exacta por servicio + invocation_id**, con
+`requests.customDimensions["Service ID"]` y `["Request Id"]` de A2A POST:
+
+1. `request_context()` conserva el ID de raiz y la atribucion de identidad
+   existente, incluida su inferencia desde metricas.
+2. `failure_context()` agrega primero las raices a una fila por clave
+   (`summarize arg_max(timestamp, *)`) y proyecta `RootContext` antes del
+   `leftouter`. No puede multiplicar excepciones por requests duplicadas.
+3. La raiz canonica enriquece producto/subscription y contexto conocido.
+   Si faltan campos en la raiz, conserva los metadatos directos de la excepcion.
+   La inferencia organizativa desde metricas conserva las limitaciones descritas
+   arriba: no prueba atribucion causal.
+4. `impacted_invocations()` une **solo fallos HTTP A2A** (`success=false` o
+   codigo >=400) y excepciones finales identificables. Deduplica primero
+   excepciones por clave y luego la union, prefiriendo el origen/causa de la
+   excepcion. Sin excepcion, `ErrorOrigin=http_a2a` significa fallo HTTP de
+   origen no clasificado, no fallo confirmado de agente/modelo.
+5. Los KPI usan `summarize` + `count()` exactos, no `dcount()`. Los requests HTTP
+   del modelo **no participan** en esta union. Sus IDs y `model_call_id` no son
+   IDs de invocacion de usuario; intentos y reintentos siguen siendo fisicos.
+
+Los filtros logicos se aplican tras enriquecer y deduplicar. Ambas fuentes
+respetan el intervalo de Grafana. La raiz puede llegar mas tarde o caer fuera
+de rango: el `leftouter` mantiene visible el fallo sin raiz y el panel
+**Cobertura de excepciones finales y correlacion** distingue coincidencia
+exacta, raiz ausente, ID ausente y servicio ausente. No hay joins aproximados
+por subscription/tiempo. El instante de la excepcion prevalece en la serie
+de invocaciones cuando existe; `RootCode=200` permite reconocer FAILED bajo SSE
+y `UpstreamStatus` muestra el estado del modelo solo cuando se emitio.
+
+Las filas sin ID o servicio conocido se cuentan en los controles de calidad,
+pero se **excluyen** del KPI unico: no se colapsan todas como una sola
+invocacion ni se inventa una clave. El control HTTP A2A expone tambien sus
+claves ausentes. Los contadores de excepciones representan filas observadas,
+no entidades unicas; sampling, duplicacion, perdidas e intervalos incompletos
+limitan la cobertura. `Representadas` muestra la suma de `itemCount`, no una
+correccion del KPI unico. **Sin excepciones significa ningun fallo instrumentado
+observado, no exito demostrado** ni prueba de que el exportador este activo.
+Las tablas de detalle limitan a 1000 grupos; los totales no tienen ese limite.
 
 ### Tiempo y completitud
 

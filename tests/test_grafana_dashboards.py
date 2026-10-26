@@ -8,11 +8,18 @@ from dashboards.grafana.generate import (
     BASIC_DIMENSIONS,
     DATASOURCE,
     DIMENSIONS,
+    LIMIT_TYPES,
     METRICS,
+    MODEL_REQUEST_DIMENSIONS,
     REQUEST_DIMENSIONS,
     build_dashboards,
     dimension_query,
+    failure_context,
+    final_failure_base,
+    impacted_invocations,
+    model_request_base,
     product_comparison,
+    raw_exceptions,
     raw_requests,
     request_base,
     request_context,
@@ -59,6 +66,8 @@ def test_import_contract_and_sections(dashboard):
     assert [row["title"] for row in rows] == [
         "Resumen de consumo",
         "Acceso y rechazos A2A",
+        "Acceso al modelo y limites LLM",
+        "Errores fisicos e invocaciones impactadas",
         "Productos y subscriptions",
         "Reparto organizativo",
         "Usuarios",
@@ -81,7 +90,9 @@ def test_unified_dashboard_does_not_duplicate_consumption_panels(dashboard):
         "Consumo por departamento y equipo",
         "Detalle de consumo por usuario y contexto",
         "Calidad de las metricas",
-        "Respuestas HTTP429",
+        "HTTP429 agentes - request-rate-limit",
+        "HTTP429 modelo - llm-rate-limit",
+        "HTTP429 por tipo de limite",
         "Comparativa de productos: peticiones, HTTP429 y tokens",
         "Usuarios y subscriptions: impacto de HTTP429",
     ):
@@ -103,14 +114,16 @@ def test_azure_monitor_query_shape(dashboard):
 def test_kql_uses_preaggregated_sums_and_dashboard_time(dashboard):
     for query in queries(dashboard):
         kql = query["azureLogAnalytics"]["query"]
-        assert "customMetrics\n" in kql
         assert "$__timeFilter(timestamp)" in kql
-        assert "Tokens = todouble(valueSum)" in kql
+        if "customMetrics\n" in kql:
+            assert "Tokens = todouble(valueSum)" in kql
+            for metric in METRICS:
+                assert f'"{metric}"' in kql
+        else:
+            assert "requests\n" in kql
         assert "AppMetrics" not in kql
         assert not re.search(r"\b(?:sum|avg)\(value(?:Count)?\)", kql)
         assert "sum(valueSum) + " not in kql
-        for metric in METRICS:
-            assert f'"{metric}"' in kql
         if query["azureLogAnalytics"]["resultFormat"] == "time_series":
             assert "bin(timestamp, $__interval)" in kql
             assert kql.endswith("| order by timestamp asc")
@@ -146,12 +159,16 @@ def test_every_data_panel_applies_all_dimension_filters(dashboard):
         for query in panel.get("targets", []):
             kql = query["azureLogAnalytics"]["query"]
             required = (
-                BASIC_DIMENSIONS
+                ("service",)
+                if panel["title"] == "Contexto y sampling de requests HTTP"
+                else BASIC_DIMENSIONS
                 if "Antes de filtros" in panel.get("description", "")
                 or "antes de filtros" in panel.get("description", "")
                 else REQUEST_DIMENSIONS
                 if "let AgentRequests" in kql
                 else DIMENSIONS
+                if "customMetrics\n" in kql
+                else MODEL_REQUEST_DIMENSIONS
             )
             for dimension in required:
                 assert f"$__contains({dimension}, ${dimension})" in kql
@@ -263,7 +280,11 @@ def test_request_filters_do_not_use_model_and_apply_after_enrichment():
 def test_product_join_is_one_to_one_and_preserves_missing_tokens():
     kql = product_comparison()
     join_at = kql.index("| join kind=fullouter TokensByProduct on service, product")
-    assert kql[:join_at].count("by service, product") == 2
+    assert kql[:join_at].count("by service, product") == 3
+    assert "| join kind=fullouter ModelRequestsByProduct on service, product" in kql
+    assert "RequestRateLimit429 = HTTP429" in kql
+    assert "LLMRateLimit429 = HTTP429" in kql
+    assert "PeticionesModelo = Peticiones" in kql
     assert "coalesce(Total" not in kql
     assert "coalesce(Entrada" not in kql
     assert "coalesce(Salida" not in kql
@@ -307,3 +328,236 @@ def test_coverage_preserves_unattributed_traffic_under_identity_filters(dashboar
             assert f"$__contains({dimension}, ${dimension})" in kql
         for dimension in ("department", "team", "user", "model"):
             assert f"$__contains({dimension}, ${dimension})" not in kql
+
+
+@pytest.mark.parametrize("api_type", ["a2a", "http"])
+def test_request_limit_classification_uses_api_type(api_type):
+    kql = raw_requests(api_type)
+    assert f'customDimensions["API Type"]) =~ "{api_type}"' in kql
+    assert f'ApiType = "{api_type}"' in kql
+    assert f'LimitType = "{LIMIT_TYPES[api_type]}"' in kql
+    assert 'customDimensions["HTTP Method"]) =~ "POST"' in kql
+    assert 'customDimensions["API Name"]' in kql
+    assert "LastError" not in kql
+    assert "| join" not in kql
+
+
+def test_model_requests_preserve_missing_context_without_inference():
+    kql = model_request_base()
+    assert 'customDimensions["API Type"]) =~ "http"' in kql
+    assert "customMetrics" not in kql
+    assert "join" not in kql
+    for dimension in ("product", "subscriptionId", "api"):
+        assert f'trim(@"\\s+", {dimension})' in kql
+    for dimension in MODEL_REQUEST_DIMENSIONS:
+        assert f"$__contains({dimension}, ${dimension})" in kql
+    for dimension in ("agent", "department", "team", "user", "model"):
+        assert f"$__contains({dimension}, ${dimension})" not in kql
+
+
+def test_model_panels_use_http_denominators_and_separate_sampling(dashboard):
+    panels = {p["title"]: p for p in dashboard["panels"]}
+    for title in (
+        "Peticiones HTTP al modelo observadas",
+        "HTTP429 modelo - llm-rate-limit",
+        "Porcentaje HTTP429 del modelo",
+        "HTTP403 del modelo - causa sin confirmar",
+        "Modelo: peticiones y llm-rate-limit por API y subscription",
+    ):
+        kql = panels[title]["targets"][0]["azureLogAnalytics"]["query"]
+        assert 'customDimensions["API Type"]) =~ "http"' in kql
+        assert 'customDimensions["API Type"]) =~ "a2a"' not in kql
+        assert "Peticiones = count()" in kql
+        assert "100.0 * HTTP429 / Peticiones" in kql
+        assert "Representadas = sum(Represented)" in kql
+
+
+def test_comparison_series_separates_types_and_uses_common_filters(dashboard):
+    panels = {p["title"]: p for p in dashboard["panels"]}
+    kql = panels["HTTP429 por tipo de limite"]["targets"][0]["azureLogAnalytics"]["query"]
+    for api_type, limit_type in LIMIT_TYPES.items():
+        assert f'customDimensions["API Type"]) =~ "{api_type}"' in kql
+        assert f'LimitType = "{limit_type}"' in kql
+    assert 'countif(Code == "429")' in kql
+    assert "by bin(timestamp, $__interval), LimitType" in kql
+    for dimension in MODEL_REQUEST_DIMENSIONS:
+        assert kql.count(f"$__contains({dimension}, ${dimension})") == 2
+    for dimension in ("agent", "department", "team", "user", "model"):
+        assert f"$__contains({dimension}, ${dimension})" not in kql
+
+
+@pytest.mark.parametrize("dimension", ["service", "product", "subscriptionId"])
+def test_model_only_filter_options_ignore_unavailable_agent_filter(dimension):
+    preceding = DIMENSIONS[: DIMENSIONS.index(dimension)]
+    kql = dimension_query(dimension, preceding)
+    http_branch = kql.split('customDimensions["API Type"]) =~ "http"', 1)[1].split("),\n(", 1)[0]
+    assert "$__contains(agent, $agent)" not in http_branch
+    assert f"| project {dimension})" in http_branch
+
+
+def test_model_context_quality_exposes_missing_product_and_subscription(dashboard):
+    panel = next(
+        p for p in dashboard["panels"] if p["title"] == "Contexto y sampling de requests HTTP"
+    )
+    kql = panel["targets"][0]["azureLogAnalytics"]["query"]
+    assert "$__contains(service, $service)" in kql
+    for dimension in DIMENSIONS[1:]:
+        assert f"$__contains({dimension}, ${dimension})" not in kql
+    assert 'SinProducto = countif(product == "(sin dimension)")' in kql
+    assert 'SinSubscription = countif(subscriptionId == "(sin dimension)")' in kql
+    assert "ConSampling = countif(Represented > 1)" in kql
+
+
+def test_product_comparison_formats_both_percentages(dashboard):
+    panel = next(
+        p
+        for p in dashboard["panels"]
+        if p["title"] == "Comparativa de productos: peticiones, HTTP429 y tokens"
+    )
+    override = panel["fieldConfig"]["overrides"][0]
+    assert override["matcher"]["id"] == "byRegexp"
+    for field in ("Porcentaje", "PorcentajeModelo"):
+        assert re.fullmatch(override["matcher"]["options"], field)
+    assert {"id": "unit", "value": "percent"} in override["properties"]
+    assert {"id": "decimals", "value": 1} in override["properties"]
+
+
+def test_final_failures_use_only_versioned_exception_contract():
+    kql = raw_exceptions()
+    assert kql.startswith("exceptions\n| where $__timeFilter(timestamp)")
+    assert 'customDimensions["event"]) == "agent_invocation_failed"' in kql
+    assert 'customDimensions["schema_version"]) == "1"' in kql
+    for field in (
+        "invocation_id",
+        "correlation_source",
+        "service",
+        "agent",
+        "task_id",
+        "model_call_id",
+        "model",
+        "department",
+        "team",
+        "user",
+        "error_origin",
+        "error_kind",
+    ):
+        assert f'trim(@"\\s+", tostring(customDimensions["{field}"]))' in kql
+    assert 'toint(customDimensions["upstream_status"])' in kql
+    assert 'todouble(customDimensions["retry_after_seconds"])' in kql
+    for forbidden in ("traces", "customEvents", "outerMessage", "operation_Id", "LastError"):
+        assert forbidden not in kql
+    for unavailable in ("product", "subscriptionId"):
+        assert f'{unavailable} = "(sin dimension)"' in kql
+        assert f'customDimensions["{unavailable}"]' not in kql
+    assert "case(" not in kql  # Do not infer a cause or quota from HTTP status.
+
+
+def test_exception_root_join_is_exact_preaggregated_and_preserves_unjoined_events():
+    kql = failure_context()
+    roots, exceptions = kql.split("let FinalFailures = ", 1)
+    assert 'customDimensions["Request Id"]' in roots
+    assert "InvocationId;" in request_context()
+    assert "| summarize arg_max(timestamp, *) by service, InvocationId;" in roots
+    assert "| project service, InvocationId, RootObserved = true" in roots
+    assert "| join kind=leftouter RootContext on service, InvocationId" in exceptions
+    assert 'isempty(InvocationId), "sin invocation_id"' in exceptions
+    assert 'service == "(sin dimension)", "sin servicio"' in exceptions
+    assert '"sin raiz A2A en intervalo"' in exceptions
+    for dimension in REQUEST_DIMENSIONS:
+        if dimension != "service":
+            assert (
+                f"{dimension} = iff(isnotempty(root_{dimension}) and "
+                f'root_{dimension} != "(sin dimension)", root_{dimension}, {dimension})'
+            ) in exceptions
+    assert "$__timeFilter(timestamp)" in roots and "$__timeFilter(timestamp)" in exceptions
+    assert "$__contains" not in kql
+    assert "on service, subscriptionId" not in exceptions
+    assert "bin(timestamp" not in kql
+
+
+@pytest.mark.parametrize("helper", [final_failure_base, impacted_invocations])
+def test_logical_failure_filters_use_request_context_and_ignore_model(helper):
+    kql = helper()
+    for dimension in REQUEST_DIMENSIONS:
+        expression = f"$__contains({dimension}, ${dimension})"
+        assert kql.count(expression) == 1
+        assert kql.index(expression) > kql.index("| join kind=leftouter RootContext")
+    assert "$__contains(model, $model)" not in kql
+
+
+def test_unique_impacts_union_only_root_failures_and_final_exceptions_with_priority():
+    kql = impacted_invocations()
+    http = kql.split("let HttpFailures = ", 1)[1].split("let InstrumentedFailures", 1)[0]
+    instrumented = kql.split("let InstrumentedFailures = ", 1)[1].split("let Impacted", 1)[0]
+    unique = kql.split("let Impacted = ", 1)[1]
+    assert "| where not(Successful) or toint(Code) >= 400" in http
+    assert 'ErrorOrigin = "http_a2a"' in http
+    assert "SourcePriority = 0" in http and "SourcePriority = 1" in instrumented
+    assert 'isnotempty(InvocationId) and service != "(sin dimension)"' in instrumented
+    assert "| summarize arg_max(timestamp, *) by service, InvocationId" in instrumented
+    assert "union HttpFailures, InstrumentedFailures" in unique
+    assert "| summarize arg_max(SourcePriority, *) by service, InvocationId;" in unique
+    assert unique.index("arg_max") < unique.index("$__contains")
+    for forbidden in ("dcount", 'API Type"]) =~ "http"', "by ModelCallId", "quota", "LastError"):
+        assert forbidden not in kql
+    assert 'where Code == "429"' not in kql
+    assert "UpstreamStatus, RootCode" in http and "UpstreamStatus, RootCode" in instrumented
+
+
+def test_error_row_distinguishes_physical_logical_origins_and_missing_key_quality(dashboard):
+    rows = [p for p in dashboard["panels"] if p["type"] == "row"]
+    row_index = next(
+        i
+        for i, row in enumerate(rows)
+        if row["title"] == "Errores fisicos e invocaciones impactadas"
+    )
+    start, end = rows[row_index]["gridPos"]["y"], rows[row_index + 1]["gridPos"]["y"]
+    section = [p for p in dashboard["panels"] if start < p["gridPos"]["y"] < end]
+    panels = {p["title"]: p for p in section}
+    note = panels["Alcance y lectura"]["options"]["content"]
+    assert "ningun fallo instrumentado observado, no exito demostrado" in note
+    assert "Application Insights exceptions" in note
+    for title in (
+        "HTTP429 fisicos A2A - no invocaciones",
+        "HTTP429 fisicos modelo - no invocaciones",
+    ):
+        kql = panels[title]["targets"][0]["azureLogAnalytics"]["query"]
+        assert 'countif(Code == "429")' in kql
+        assert "exceptions" not in kql and "dcount" not in kql
+        for dimension in MODEL_REQUEST_DIMENSIONS:
+            assert f"$__contains({dimension}, ${dimension})" in kql
+        for dimension in ("agent", "department", "team", "user", "model"):
+            assert f"$__contains({dimension}, ${dimension})" not in kql
+    for title, expression in (
+        ("Invocaciones impactadas unicas", "Invocaciones = count()"),
+        ("Excepciones finales observadas - no unicos", "ExcepcionesFinales = count()"),
+    ):
+        kql = panels[title]["targets"][0]["azureLogAnalytics"]["query"]
+        assert kql.endswith("| summarize " + expression)
+    origins = panels["Invocaciones impactadas por origen"]["targets"][0]["azureLogAnalytics"][
+        "query"
+    ]
+    assert "by bin(timestamp, $__interval), ErrorOrigin" in origins
+    coverage = panels["Cobertura de excepciones finales y correlacion"]["targets"][0][
+        "azureLogAnalytics"
+    ]["query"]
+    assert "SinInvocationId = countif(isempty(InvocationId))" in coverage
+    assert 'SinServicio = countif(service == "(sin dimension)")' in coverage
+    assert 'BajoHTTP200 = countif(RootCode == "200")' in coverage
+    assert "ConSampling = countif(Represented > 1)" in coverage
+    assert "summarize arg_max" not in coverage.split("let FinalFailures = ", 1)[1]
+    http_quality = panels["Calidad de claves de fallos HTTP A2A"]["targets"][0][
+        "azureLogAnalytics"
+    ]["query"]
+    assert "SinInvocationId = countif(isempty(InvocationId))" in http_quality
+    assert 'SinServicio = countif(service == "(sin dimension)")' in http_quality
+
+
+@pytest.mark.parametrize("dimension", REQUEST_DIMENSIONS)
+def test_dimension_options_retain_exception_only_context(dimension):
+    kql = dimension_query(dimension, DIMENSIONS[: DIMENSIONS.index(dimension)])
+    branch = kql.rsplit(",\n(", 1)[1]
+    assert branch.startswith("FinalFailures")
+    assert f"| project {dimension})" in branch
+    assert kql.count("let AgentRequests = ") == 1
+    assert kql.count("let FinalFailures = ") == 1

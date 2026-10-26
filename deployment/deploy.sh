@@ -23,6 +23,9 @@ Optional:
   CUSTOMER_MODEL_DEPLOYMENT  Default: gpt-5.4-mini
   RISK_OPENAI_BASE_URL        Overrides OPENAI_BASE_URL for risk
   CUSTOMER_OPENAI_BASE_URL    Overrides OPENAI_BASE_URL for customer
+  MAX_RETRIES                Default: 0; accepts RISK_ / CUSTOMER_ overrides
+  APPLICATIONINSIGHTS_CONNECTION_STRING  Optional; exports sanitized failures to exceptions
+  APIM_SERVICE_ID            Optional fallback if X-Apim-Service-Id is not injected
 
 Requires Bash, Azure CLI with the containerapp extension, curl with
 --retry-all-errors support, and an authenticated Azure CLI session.
@@ -58,6 +61,11 @@ CUSTOMER_MODEL_DEPLOYMENT="${CUSTOMER_MODEL_DEPLOYMENT:-gpt-5.4-mini}"
 FOUNDRY_RESOURCE_ID="${FOUNDRY_RESOURCE_ID%/}"
 RISK_OPENAI_BASE_URL="${RISK_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-}}"
 CUSTOMER_OPENAI_BASE_URL="${CUSTOMER_OPENAI_BASE_URL:-${OPENAI_BASE_URL:-}}"
+RISK_MAX_RETRIES="${RISK_MAX_RETRIES:-${MAX_RETRIES:-0}}"
+CUSTOMER_MAX_RETRIES="${CUSTOMER_MAX_RETRIES:-${MAX_RETRIES:-0}}"
+for retries in "$RISK_MAX_RETRIES" "$CUSTOMER_MAX_RETRIES"; do
+    [[ "$retries" =~ ^[0-9]+$ ]] || die "MAX_RETRIES must be a non-negative integer."
+done
 : "${RISK_OPENAI_BASE_URL:?Set OPENAI_BASE_URL or RISK_OPENAI_BASE_URL (see --help).}"
 : "${CUSTOMER_OPENAI_BASE_URL:?Set OPENAI_BASE_URL or CUSTOMER_OPENAI_BASE_URL (see --help).}"
 FOUNDRY_USER_ROLE_ID="53ca6127-db72-4b80-b1b0-d745d6d5456d"
@@ -120,15 +128,33 @@ deploy_agent() {
         "OPENAI_BASE_URL="
         "${prefix}_OPENAI_BASE_URL=$openai_base_url"
     )
+    local -a secrets=()
+    if [[ "$prefix" == "RISK" ]]; then
+        settings+=("RISK_MAX_RETRIES=$RISK_MAX_RETRIES")
+    else
+        settings+=("CUSTOMER_MAX_RETRIES=$CUSTOMER_MAX_RETRIES")
+    fi
+    if [[ -n "${APPLICATIONINSIGHTS_CONNECTION_STRING:-}" ]]; then
+        secrets+=("applicationinsights-connection-string=$APPLICATIONINSIGHTS_CONNECTION_STRING")
+        settings+=("APPLICATIONINSIGHTS_CONNECTION_STRING=secretref:applicationinsights-connection-string")
+    fi
+    if [[ -n "${APIM_SERVICE_ID:-}" ]]; then
+        settings+=("APIM_SERVICE_ID=$APIM_SERVICE_ID")
+    fi
 
     existing_id="$(azure containerapp list --resource-group "$RESOURCE_GROUP" \
         --query "[?name=='$name'].id | [0]" --output tsv)"
     if [[ -z "$existing_id" ]]; then
+        local -a secret_options=()
+        if (( ${#secrets[@]} )); then
+            secret_options=(--secrets "${secrets[@]}")
+        fi
         azure containerapp create --name "$name" --resource-group "$RESOURCE_GROUP" \
             --environment "$environment_id" --image "$image" --system-assigned \
             --ingress external --allow-insecure false --target-port "$port" --transport http \
             --revisions-mode single --min-replicas 1 --max-replicas 1 \
-            --cpu 0.5 --memory 1Gi --env-vars "${settings[@]}" --output none
+            --cpu 0.5 --memory 1Gi --env-vars "${settings[@]}" \
+            "${secret_options[@]}" --output none
     else
         existing_environment="$(azure containerapp show --name "$name" \
             --resource-group "$RESOURCE_GROUP" --query properties.managedEnvironmentId --output tsv)"
@@ -141,6 +167,10 @@ deploy_agent() {
             --output none
         azure containerapp revision set-mode --name "$name" \
             --resource-group "$RESOURCE_GROUP" --mode single --output none
+        if (( ${#secrets[@]} )); then
+            azure containerapp secret set --name "$name" --resource-group "$RESOURCE_GROUP" \
+                --secrets "${secrets[@]}" --output none
+        fi
         azure containerapp update --name "$name" --resource-group "$RESOURCE_GROUP" \
             --image "$image" --min-replicas 1 --max-replicas 1 --cpu 0.5 --memory 1Gi \
             --set-env-vars "${settings[@]}" --output none
