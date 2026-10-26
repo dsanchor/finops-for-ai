@@ -50,6 +50,8 @@ class UsageExecutor(A2AExecutor):
                 }
             )
         )
+        if (subscription_key := headers.get("Ocp-Apim-Subscription-Key")) is not None:
+            model_headers["Ocp-Apim-Subscription-Key"] = subscription_key
         run_kwargs = {"client_kwargs": {"extra_headers": model_headers}} if model_headers else {}
         super().__init__(agent, stream=True, run_kwargs=run_kwargs)
         self.settings = settings

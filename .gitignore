@@ -7,3 +7,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 results/
+clients/data/identities.local.csv
+*.csv.subs

@@ -195,7 +195,18 @@ async def run(args: argparse.Namespace, kind: AgentKind) -> int:
                     streaming=True, httpx_client=http, supported_protocol_bindings=["JSONRPC"]
                 )
             )
-            card = await A2ACardResolver(http, card_url).get_agent_card(relative_card_path="/")
+            first_headers = request_headers[0] if request_headers else None
+            discovery_key = (
+                first_headers.get("Ocp-Apim-Subscription-Key") if first_headers else None
+            )
+            card = await A2ACardResolver(http, card_url).get_agent_card(
+                relative_card_path="/",
+                http_kwargs=(
+                    {"headers": {"Ocp-Apim-Subscription-Key": discovery_key}}
+                    if discovery_key
+                    else None
+                ),
+            )
             client = factory.create(card)
             try:
                 await asyncio.gather(*(one(i + 1, p, client) for i, p in enumerate(prompts)))
@@ -246,7 +257,9 @@ def main(kind: AgentKind) -> None:
     parser.add_argument("--concurrency", type=positive_int)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
-        "--identities-file", type=Path, help="CSV without header: department,team,user"
+        "--identities-file",
+        type=Path,
+        help="CSV without header: department,team,user[,subscription_key]",
     )
     parser.add_argument(
         "--identity-mode",

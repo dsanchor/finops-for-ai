@@ -1,0 +1,2296 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_AZURE_MONITOR",
+      "label": "Azure Monitor",
+      "description": "Datasource Azure Monitor con acceso de lectura a Application Insights.",
+      "type": "datasource",
+      "pluginId": "grafana-azure-monitor-datasource",
+      "pluginName": "Azure Monitor"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.4.0"
+    },
+    {
+      "type": "datasource",
+      "id": "grafana-azure-monitor-datasource",
+      "name": "Azure Monitor",
+      "version": "1.0.0"
+    }
+  ],
+  "id": null,
+  "uid": "ai-tokens-consumption",
+  "title": "AI Tokens - Consumo unificado",
+  "description": "Consumo de tokens A2A/APIM desde customMetrics de Application Insights.",
+  "tags": [
+    "ai-token-consumption",
+    "finops",
+    "azure-monitor"
+  ],
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "utc",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "timepicker": {
+    "refresh_intervals": [
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h"
+    ]
+  },
+  "links": [],
+  "templating": {
+    "list": [
+      {
+        "name": "appInsightsResourceId",
+        "label": "Application Insights resource ID",
+        "type": "textbox",
+        "query": "/subscriptions/0c2b616d-05ea-49f8-b176-e2e06149c164/resourceGroups/finops-for-ai-rg/providers/Microsoft.Insights/components/finops4aiappsins",
+        "current": {
+          "text": "/subscriptions/0c2b616d-05ea-49f8-b176-e2e06149c164/resourceGroups/finops-for-ai-rg/providers/Microsoft.Insights/components/finops4aiappsins",
+          "value": "/subscriptions/0c2b616d-05ea-49f8-b176-e2e06149c164/resourceGroups/finops-for-ai-rg/providers/Microsoft.Insights/components/finops4aiappsins"
+        },
+        "options": [
+          {
+            "text": "/subscriptions/0c2b616d-05ea-49f8-b176-e2e06149c164/resourceGroups/finops-for-ai-rg/providers/Microsoft.Insights/components/finops4aiappsins",
+            "value": "/subscriptions/0c2b616d-05ea-49f8-b176-e2e06149c164/resourceGroups/finops-for-ai-rg/providers/Microsoft.Insights/components/finops4aiappsins",
+            "selected": true
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "name": "service",
+        "label": "Servicio APIM",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-azure-monitor-datasource",
+          "uid": "${DS_AZURE_MONITOR}"
+        },
+        "query": {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where name == \"Total Tokens\"\n| distinct service\n| order by service asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        },
+        "definition": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where name == \"Total Tokens\"\n| distinct service\n| order by service asc",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "all",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "agent",
+        "label": "Agente",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-azure-monitor-datasource",
+          "uid": "${DS_AZURE_MONITOR}"
+        },
+        "query": {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where name == \"Total Tokens\"\n| distinct agent\n| order by agent asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        },
+        "definition": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where name == \"Total Tokens\"\n| distinct agent\n| order by agent asc",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "all",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "department",
+        "label": "Departamento",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-azure-monitor-datasource",
+          "uid": "${DS_AZURE_MONITOR}"
+        },
+        "query": {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where name == \"Total Tokens\"\n| distinct department\n| order by department asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        },
+        "definition": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where name == \"Total Tokens\"\n| distinct department\n| order by department asc",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "all",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "team",
+        "label": "Equipo",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-azure-monitor-datasource",
+          "uid": "${DS_AZURE_MONITOR}"
+        },
+        "query": {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where name == \"Total Tokens\"\n| distinct team\n| order by team asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        },
+        "definition": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where name == \"Total Tokens\"\n| distinct team\n| order by team asc",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "all",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "user",
+        "label": "Usuario",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-azure-monitor-datasource",
+          "uid": "${DS_AZURE_MONITOR}"
+        },
+        "query": {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where name == \"Total Tokens\"\n| distinct user\n| order by user asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        },
+        "definition": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where name == \"Total Tokens\"\n| distinct user\n| order by user asc",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "all",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "topN",
+        "label": "Top N",
+        "type": "custom",
+        "query": "5,10,20,50",
+        "current": {
+          "text": "10",
+          "value": "10"
+        },
+        "options": [
+          {
+            "text": "5",
+            "value": "5",
+            "selected": false
+          },
+          {
+            "text": "10",
+            "value": "10",
+            "selected": true
+          },
+          {
+            "text": "20",
+            "value": "20",
+            "selected": false
+          },
+          {
+            "text": "50",
+            "value": "50",
+            "selected": false
+          }
+        ],
+        "multi": false,
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "Resumen de consumo",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "id": 1
+    },
+    {
+      "title": "Alcance y lectura",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Consumo de tokens, no costes ni peticiones.** Total = `Total Tokens`; entrada/salida se muestran por separado. Filtros comunes a todas las secciones. Comprueba frescura y calidad antes de interpretar un cero como ausencia de consumo."
+      },
+      "id": 2
+    },
+    {
+      "title": "Tokens totales",
+      "type": "stat",
+      "description": "Suma de valueSum para Total Tokens en el intervalo y filtros seleccionados.",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| summarize Tokens = sum(Tokens)",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 3
+    },
+    {
+      "title": "Tokens de entrada",
+      "type": "stat",
+      "description": "Suma de valueSum para Prompt Tokens en el intervalo y filtros seleccionados.",
+      "gridPos": {
+        "x": 6,
+        "y": 4,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Prompt Tokens\"\n| summarize Tokens = sum(Tokens)",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 4
+    },
+    {
+      "title": "Tokens de salida",
+      "type": "stat",
+      "description": "Suma de valueSum para Completion Tokens en el intervalo y filtros seleccionados.",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Completion Tokens\"\n| summarize Tokens = sum(Tokens)",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 5
+    },
+    {
+      "title": "Salida / total",
+      "type": "stat",
+      "description": "Proporcion de tokens de salida; no es proporcion del coste. Sin total, sin porcentaje.",
+      "gridPos": {
+        "x": 18,
+        "y": 4,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize Total = sumif(Tokens, name == \"Total Tokens\"), Salida = sumif(Tokens, name == \"Completion Tokens\")\n| project Porcentaje = iff(Total > 0, 100.0 * Salida / Total, real(null))",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 6
+    },
+    {
+      "title": "Agentes con metricas",
+      "type": "stat",
+      "description": "Recuento exacto de entidades con metricas Total Tokens. Excluye dimensiones ausentes. Los equipos se identifican por departamento + equipo.",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| where agent != \"(sin dimension)\"\n| summarize by agent\n| summarize Entidades = count()",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 7
+    },
+    {
+      "title": "Departamentos con metricas",
+      "type": "stat",
+      "description": "Recuento exacto de entidades con metricas Total Tokens. Excluye dimensiones ausentes. Los equipos se identifican por departamento + equipo.",
+      "gridPos": {
+        "x": 6,
+        "y": 8,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| where department != \"(sin dimension)\"\n| summarize by department\n| summarize Entidades = count()",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 8
+    },
+    {
+      "title": "Equipos con metricas",
+      "type": "stat",
+      "description": "Recuento exacto de entidades con metricas Total Tokens. Excluye dimensiones ausentes. Los equipos se identifican por departamento + equipo.",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| where department != \"(sin dimension)\" and team != \"(sin dimension)\"\n| summarize by department, team\n| summarize Entidades = count()",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 9
+    },
+    {
+      "title": "Usuarios con metricas",
+      "type": "stat",
+      "description": "Recuento exacto de entidades con metricas Total Tokens. Excluye dimensiones ausentes. Los equipos se identifican por departamento + equipo.",
+      "gridPos": {
+        "x": 18,
+        "y": 8,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| where user != \"(sin dimension)\"\n| summarize by user\n| summarize Entidades = count()",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 10
+    },
+    {
+      "title": "Evolucion de entrada y salida",
+      "type": "timeseries",
+      "description": "Tokens por intervalo, no una tasa por segundo. Total Tokens no se agrega como tercera serie para evitar doble contabilizacion.",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\")\n| summarize Tokens = sum(Tokens) by bin(timestamp, $__interval), name\n| order by timestamp asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "time_series",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1m",
+      "id": 11
+    },
+    {
+      "title": "Consumo diario UTC",
+      "type": "table",
+      "description": "Dias UTC dentro del intervalo seleccionado; primer y ultimo dia pueden ser parciales.",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize Total = sumif(Tokens, name == \"Total Tokens\"), Entrada = sumif(Tokens, name == \"Prompt Tokens\"), Salida = sumif(Tokens, name == \"Completion Tokens\")\n    by Dia = startofday(timestamp)\n| order by Dia asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 12
+    },
+    {
+      "title": "Reparto organizativo",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 1
+      },
+      "id": 13
+    },
+    {
+      "title": "Alcance y lectura",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Atribucion del consumo, no facturacion.** Compara agentes y departamentos; los equipos se distinguen por departamento. Las tablas muestran hasta 1000 filas. Top N solo limita los graficos, no las tablas."
+      },
+      "id": 14
+    },
+    {
+      "title": "Consumo por agente - Top N",
+      "type": "barchart",
+      "description": "Top N por Total Tokens. Excluye del grafico las categorias fuera del Top N; no representa por si solo el total seleccionado.",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| summarize Tokens = sum(Tokens) by agent\n| top $topN by Tokens desc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        },
+        "xTickLabelRotation": 0
+      },
+      "id": 15
+    },
+    {
+      "title": "Consumo por departamento - Top N",
+      "type": "barchart",
+      "description": "Top N por Total Tokens. Excluye del grafico las categorias fuera del Top N; no representa por si solo el total seleccionado.",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| summarize Tokens = sum(Tokens) by department\n| top $topN by Tokens desc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        },
+        "xTickLabelRotation": 0
+      },
+      "id": 16
+    },
+    {
+      "title": "Consumo por departamento y equipo",
+      "type": "table",
+      "description": "Total, entrada y salida se agregan por separado; no se suman entre si. Porcentaje = salida / total. Maximo 1000 filas, ordenadas por total; no sumar filas para reconstruir el total si se supera ese limite.",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize\n    Total = sumif(Tokens, name == \"Total Tokens\"),\n    Entrada = sumif(Tokens, name == \"Prompt Tokens\"),\n    Salida = sumif(Tokens, name == \"Completion Tokens\")\n    by department, team\n| extend Porcentaje = iff(Total > 0, 100.0 * Salida / Total, real(null))\n| top 1000 by Total desc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 17
+    },
+    {
+      "title": "Evolucion por agente - Top N",
+      "type": "timeseries",
+      "description": "Top N calculado sobre todo el intervalo, no por cada bucket. Los huecos no se rellenan: ausencia de telemetria no implica consumo cero.",
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "let Selected = materialize(customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\");\nlet Leaders = Selected\n| summarize Tokens = sum(Tokens) by agent\n| top $topN by Tokens desc\n| project agent;\nSelected\n| where agent in (Leaders)\n| summarize Tokens = sum(Tokens) by bin(timestamp, $__interval), agent\n| order by timestamp asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "time_series",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1m",
+      "id": 18
+    },
+    {
+      "title": "Evolucion por departamento - Top N",
+      "type": "timeseries",
+      "description": "Top N calculado sobre todo el intervalo, no por cada bucket. Los huecos no se rellenan: ausencia de telemetria no implica consumo cero.",
+      "gridPos": {
+        "x": 12,
+        "y": 41,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "let Selected = materialize(customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\");\nlet Leaders = Selected\n| summarize Tokens = sum(Tokens) by department\n| top $topN by Tokens desc\n| project department;\nSelected\n| where department in (Leaders)\n| summarize Tokens = sum(Tokens) by bin(timestamp, $__interval), department\n| order by timestamp asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "time_series",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1m",
+      "id": 19
+    },
+    {
+      "title": "Matriz de atribucion: agente / departamento / equipo",
+      "type": "table",
+      "description": "Total, entrada y salida se agregan por separado; no se suman entre si. Porcentaje = salida / total. Maximo 1000 filas, ordenadas por total; no sumar filas para reconstruir el total si se supera ese limite.",
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize\n    Total = sumif(Tokens, name == \"Total Tokens\"),\n    Entrada = sumif(Tokens, name == \"Prompt Tokens\"),\n    Salida = sumif(Tokens, name == \"Completion Tokens\")\n    by agent, department, team\n| extend Porcentaje = iff(Total > 0, 100.0 * Salida / Total, real(null))\n| top 1000 by Total desc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 20
+    },
+    {
+      "title": "Usuarios",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 58,
+        "w": 24,
+        "h": 1
+      },
+      "id": 21
+    },
+    {
+      "title": "Alcance y lectura",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 59,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Vista con identificadores de usuario: restringe su acceso.** Permite identificar concentracion de consumo y atribucion por organizacion. No equivale a numero de llamadas ni a coste. Top N se calcula para todo el rango."
+      },
+      "id": 22
+    },
+    {
+      "title": "Concentracion en Top N usuarios",
+      "type": "stat",
+      "description": "Porcentaje del consumo con usuario identificado que corresponde al Top N. El denominador excluye (sin dimension).",
+      "gridPos": {
+        "x": 0,
+        "y": 62,
+        "w": 12,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "let PerUser = materialize(customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| where user != \"(sin dimension)\"\n| summarize Tokens = sum(Tokens) by user);\nlet TotalIdentificado = toscalar(PerUser | summarize sum(Tokens));\nPerUser\n| top $topN by Tokens desc\n| summarize TopTokens = sum(Tokens)\n| project Porcentaje = iff(TotalIdentificado > 0, 100.0 * TopTokens / TotalIdentificado, real(null))",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 23
+    },
+    {
+      "title": "Tokens sin usuario",
+      "type": "stat",
+      "description": "Tokens sin identificador de usuario dentro de los filtros. Para auditar todos, selecciona All en Usuario.",
+      "gridPos": {
+        "x": 12,
+        "y": 62,
+        "w": 12,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| where user == \"(sin dimension)\"\n| summarize Tokens = sum(Tokens)",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 24
+    },
+    {
+      "title": "Consumo por usuario - Top N",
+      "type": "barchart",
+      "description": "Top N por Total Tokens. Excluye del grafico las categorias fuera del Top N; no representa por si solo el total seleccionado.",
+      "gridPos": {
+        "x": 0,
+        "y": 66,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| summarize Tokens = sum(Tokens) by user\n| top $topN by Tokens desc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        },
+        "xTickLabelRotation": 0
+      },
+      "id": 25
+    },
+    {
+      "title": "Evolucion por usuario - Top N",
+      "type": "timeseries",
+      "description": "Top N calculado sobre todo el intervalo, no por cada bucket. Los huecos no se rellenan: ausencia de telemetria no implica consumo cero.",
+      "gridPos": {
+        "x": 12,
+        "y": 66,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "let Selected = materialize(customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\");\nlet Leaders = Selected\n| summarize Tokens = sum(Tokens) by user\n| top $topN by Tokens desc\n| project user;\nSelected\n| where user in (Leaders)\n| summarize Tokens = sum(Tokens) by bin(timestamp, $__interval), user\n| order by timestamp asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "time_series",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1m",
+      "id": 26
+    },
+    {
+      "title": "Detalle de consumo por usuario y contexto",
+      "type": "table",
+      "description": "Total, entrada y salida se agregan por separado; no se suman entre si. Porcentaje = salida / total. Maximo 1000 filas, ordenadas por total; no sumar filas para reconstruir el total si se supera ese limite.",
+      "gridPos": {
+        "x": 0,
+        "y": 74,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize\n    Total = sumif(Tokens, name == \"Total Tokens\"),\n    Entrada = sumif(Tokens, name == \"Prompt Tokens\"),\n    Salida = sumif(Tokens, name == \"Completion Tokens\")\n    by user, department, team, agent\n| extend Porcentaje = iff(Total > 0, 100.0 * Salida / Total, real(null))\n| top 1000 by Total desc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 27
+    },
+    {
+      "title": "Calidad de datos",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 83,
+        "w": 24,
+        "h": 1
+      },
+      "id": 28
+    },
+    {
+      "title": "Minutos desde la ultima metrica",
+      "type": "stat",
+      "description": "Edad respecto a ahora de la ultima metrica dentro del rango y filtros. En rangos historicos sera alta. Sin metricas: Sin datos.",
+      "gridPos": {
+        "x": 0,
+        "y": 84,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize Ultima = max(timestamp)\n| project Minutos = datetime_diff('minute', now(), Ultima)",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 29
+    },
+    {
+      "title": "Diferencia: total - entrada - salida",
+      "type": "stat",
+      "description": "Esperado: cero si las tres metricas estan completas y alineadas. Un valor distinto puede indicar ingesta parcial, bordes temporales o telemetria inconsistente; no demuestra por si solo un error de facturacion.",
+      "gridPos": {
+        "x": 6,
+        "y": 84,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize Total = sumif(Tokens, name == \"Total Tokens\"), Entrada = sumif(Tokens, name == \"Prompt Tokens\"), Salida = sumif(Tokens, name == \"Completion Tokens\")\n| project Diferencia = Total - Entrada - Salida",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "id": 30
+    },
+    {
+      "title": "Calidad de las metricas",
+      "type": "table",
+      "description": "Registros son filas de telemetria, NO peticiones. SinSuma y Negativos deben ser cero. Las sumas no incluyen valueSum nulo.",
+      "gridPos": {
+        "x": 12,
+        "y": 84,
+        "w": 12,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize Registros = count(), SinSuma = countif(isnull(Tokens)), Negativos = countif(Tokens < 0) by Metrica = name\n| order by Metrica asc",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 31
+    },
+    {
+      "title": "Tokens sin atribucion completa",
+      "type": "table",
+      "description": "Un mismo token puede carecer de varias dimensiones: las columnas Sin_* se solapan y NO deben sumarse. Los filtros pueden excluir registros incompletos; selecciona All para una auditoria global.",
+      "gridPos": {
+        "x": 0,
+        "y": 89,
+        "w": 24,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "${DS_AZURE_MONITOR}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "${DS_AZURE_MONITOR}"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user))\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| where name == \"Total Tokens\"\n| summarize Total = sum(Tokens), Sin_agent = sumif(Tokens, agent == \"(sin dimension)\"), Sin_department = sumif(Tokens, department == \"(sin dimension)\"), Sin_team = sumif(Tokens, team == \"(sin dimension)\"), Sin_user = sumif(Tokens, user == \"(sin dimension)\")",
+            "resources": [
+              "${appInsightsResourceId}"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": false,
+            "timeColumn": "timestamp"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Sin datos",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Porcentaje"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 32
+    }
+  ],
+  "annotations": {
+    "list": []
+  }
+}

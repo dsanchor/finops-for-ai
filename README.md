@@ -45,18 +45,22 @@ por agente. Un override por agente vacio usa la URL compartida. Cada agente debe
 tener una URL base, ya sea compartida o propia; si falta, falla al arrancar.
 No se usa `FOUNDRY_PROJECT_ENDPOINT` ni se instancia el SDK de proyectos.
 Las solicitudes Responses van a `<OPENAI_BASE_URL>/responses`, manteniendo
-streaming y las cabeceras `X-Agent`, `X-Department`, `X-Team` y `X-User` recibidas.
+streaming y las cabeceras `X-Agent`, `X-Department`, `X-Team`, `X-User` y
+`Ocp-Apim-Subscription-Key` recibidas.
 OpenAI v1 no necesita un parametro `api-version`; las antiguas variables
 `API_VERSION` y `ALLOW_PREVIEW` ya no se utilizan.
 
 La autenticacion usa Azure Identity y un proveedor de tokens Entra ID, con scope
 `https://ai.azure.com/.default`; cambiar la URL no cambia la audiencia del token.
 APIM debe aceptar y validar esa audiencia y configurar la autenticacion hacia
-Foundry. No se anaden API keys, subscription keys ni se reenvia el token del
-cliente A2A. Si tu APIM exige un token para otra audiencia o una subscription
-key, esa configuracion de autenticacion requiere un cambio adicional.
+Foundry. No se anaden API keys del modelo ni se reenvia el token del cliente A2A.
+Si la peticion A2A incluye `Ocp-Apim-Subscription-Key`, el agente propaga esa misma
+clave al endpoint de modelo configurado, sin registrarla en logs. Si el APIM
+del modelo exige subscription key, esa subscription debe autorizar tambien la
+API del modelo; no se intercambia por otra clave. Una audiencia Entra distinta
+requiere un cambio adicional.
 
-La autenticacion es **exclusivamente Azure Identity**, sin API keys:
+La autenticacion ante Foundry usa **Azure Identity**, sin API keys del modelo:
 
 - Local: `AUTH_MODE=cli`; autenticate manualmente con `az login`.
 - En Azure: `AUTH_MODE=managed_identity`. Asigna una identidad y sus permisos al
@@ -124,7 +128,7 @@ Cada servicio publica:
   oficial A2A y el adaptador `A2AExecutor` de Agent Framework, no un protocolo propio.
 
   Ambos agentes propagan las cabeceras HTTP `X-Agent`, `X-Department`, `X-Team`
-  y `X-User` de cada solicitud A2A a las llamadas al modelo mediante
+  y `X-User`, ademas de `Ocp-Apim-Subscription-Key`, de cada solicitud A2A a las llamadas al modelo mediante
   `extra_headers` del SDK. Los valores se conservan por
   peticion, tambien en streaming y con solicitudes concurrentes; no se modifica
   el cliente compartido ni se introducen en el prompt. Los nombres de cabecera
@@ -132,12 +136,14 @@ Cada servicio publica:
   cabecera, no se envia ni se inventa un valor a partir del perfil. No se propagan otras
   cabeceras entrantes, incluido `Authorization`: se mantiene Azure Identity para
   autenticar las llamadas a Foundry.
+  La subscription key solo debe enviarse a endpoints de modelo de confianza;
+  el agente la propaga tambien si se configura una URL directa sin APIM.
 
   Al iniciar cada ejecucion A2A, ambos agentes emiten un log JSON de nivel `INFO`
   con `event=request_headers`, `agent` (el tipo de agente local) y `headers`
   con los valores recibidos de `X-Agent`, `X-Department`, `X-Team` y `X-User`.
   Las cabeceras ausentes se omiten; si no llega ninguna, `headers` es `{}`.
-  No se registran otras cabeceras, tokens de autenticacion ni prompts en este
+  No se registra `Ocp-Apim-Subscription-Key`, otras cabeceras, tokens de autenticacion ni prompts en este
   evento. `X-User` puede contener un correo: protege el acceso y la retencion de
   estos logs. Configura `LOG_LEVEL=INFO` (o el override del agente) para verlos.
 
@@ -159,6 +165,13 @@ implementacion de conversaciones persistentes ni un servicio distribuido.
 Para cargas prolongadas debe sustituirse por un almacen persistente con
 politica de retencion; las solicitudes pueden almacenar contenido en ese almacen.
 Usa solo datos sinteticos en esta demostracion.
+
+## Dashboards de consumo en Grafana
+
+El [dashboard unificado de Grafana](dashboards/grafana/README.md) permite consultar
+consumo de tokens desde `customMetrics` de Application Insights, con filtros
+por agente, departamento, equipo y usuario. Incluye resumen, reparto
+organizativo, detalle de usuarios y calidad de datos; por ahora no calcula costes ni cuotas.
 
 ## 3. Clientes Python A2A streaming
 
@@ -220,7 +233,8 @@ El directorio de `--output` debe existir; cada ejecucion sobrescribe ese archivo
 ### Cabeceras por usuario desde CSV
 
 Ambos clientes admiten `--identities-file` con un CSV UTF-8 **sin cabecera**,
-con tres columnas por fila en este orden: `department,team,user`. Por ejemplo:
+con tres columnas y una cuarta opcional:
+`department,team,user[,subscription_key]`. Por ejemplo, sin claves:
 
 ```csv
 finance,globalrisk,david@microsoft.com
@@ -248,13 +262,34 @@ Con concurrencia, la asignacion sigue el numero de peticion; el orden de llegada
 o finalizacion puede variar.
 
 Cada peticion envia `X-Department`, `X-Team` y `X-User` de la misma fila, sin
-modificar el cliente HTTP compartido. **El cliente no envia `X-Agent`**: APIM
+modificar el cliente HTTP compartido. Si la fila contiene una cuarta columna
+con clave, envia tambien `Ocp-Apim-Subscription-Key` para esa peticion.
+La descarga inicial de la Agent Card utiliza la clave de la identidad
+seleccionada para la primera peticion; las peticiones posteriores usan cada
+una la clave de su fila. Los productos deben permitir tanto discovery como
+runtime cuando ambos requieran subscription key. El agente propaga tambien la
+clave al endpoint del modelo, por lo que la subscription debe permitir esa API
+si requiere clave. La clave no se incluye deliberadamente en logs ni resultados JSONL.
+**El cliente no envia `X-Agent`**: APIM
 debe introducirlo al llamar al agente. Sin `--identities-file` no se envian
-estas tres cabeceras y se mantiene el comportamiento anterior.
-El fichero debe contener al menos una fila; los campos vacios, filas con un
-numero de columnas distinto de tres y valores no ASCII imprimibles se rechazan
+estas cabeceras de identidad ni la subscription key.
+El fichero debe contener al menos una fila; los tres primeros campos vacios,
+filas con un numero de columnas distinto de tres o cuatro y valores no ASCII imprimibles se rechazan
 antes de enviar peticiones. Se eliminan espacios al principio y final de cada
-campo. Los errores de lectura o formato terminan el proceso con codigo 1.
+campo. Una cuarta columna vacia equivale a no enviar clave; las claves
+admiten como maximo 256 caracteres.
+Los errores de lectura o formato terminan el proceso con codigo 1.
+
+Para crear usuarios del Developer Portal de APIM y subscriptions aleatorias
+asociadas a productos existentes, usa
+[onboard_apim_users.py](deployment/onboard_apim_users.py). Las
+[instrucciones de onboarding](deployment/README.md#usuarios-y-subscriptions-de-apim)
+explican como guardar la clave primaria al final de cada fila en un fichero
+nuevo, anadiendo `.subs` al nombre de entrada. Por ejemplo,
+`clients/data/identities.csv` produce `clients/data/identities.csv.subs`;
+el original se conserva intacto. Pasa el fichero `.subs` al cliente mediante
+`--identities-file`. Los ficheros `*.csv.subs` estan ignorados por Git porque
+contienen secretos.
 
 En todas las modalidades se imprime un bloque **Peticion** con el mensaje
 completo (incluidos los documentos) **antes de enviarlo**, y despues un bloque

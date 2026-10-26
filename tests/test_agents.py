@@ -228,11 +228,19 @@ async def test_model_headers_are_isolated_per_request(live_agent, caplog):
                 index,
                 {
                     name: f"value-{index}-{name}"
-                    for bit, name in enumerate(("X-Agent", "X-Department", "X-Team", "X-User"))
+                    for bit, name in enumerate(
+                        (
+                            "X-Agent",
+                            "X-Department",
+                            "X-Team",
+                            "X-User",
+                            "Ocp-Apim-Subscription-Key",
+                        )
+                    )
                     if index & (1 << bit)
                 },
             )
-            for index in range(16)
+            for index in range(32)
         )
     )
     await send("after-concurrent-requests", {})
@@ -241,12 +249,20 @@ async def test_model_headers_are_isolated_per_request(live_agent, caplog):
         for record in caplog.records
         if record.name == "agents.server" and '"request_headers"' in record.message
     ]
-    assert len(records) == 17
+    assert len(records) == 33
     assert all(record["agent"] == config.kind for record in records)
     assert sorted(json.dumps(record["headers"], sort_keys=True) for record in records) == sorted(
-        json.dumps(kwargs.get("extra_headers", {}), sort_keys=True)
+        json.dumps(
+            {
+                name: value
+                for name, value in kwargs.get("extra_headers", {}).items()
+                if name != "Ocp-Apim-Subscription-Key"
+            },
+            sort_keys=True,
+        )
         for kwargs in model.request_kwargs.values()
     )
+    assert "Ocp-Apim-Subscription-Key" not in caplog.text
     assert records[-1]["headers"] == {}
 
 
@@ -289,8 +305,9 @@ def model_stream_response(model: str) -> httpx.Response:
 
 
 @pytest.mark.parametrize("kind", ["risk", "customer"])
-@pytest.mark.parametrize("header_mask", range(16))
-async def test_forwarded_headers_reach_model_http_request(kind, header_mask):
+@pytest.mark.parametrize("header_mask", range(32))
+async def test_forwarded_headers_reach_model_http_request(kind, header_mask, caplog):
+    caplog.set_level(logging.INFO, logger="agents.server")
     requests: list[httpx.Request] = []
 
     def respond(request):
@@ -298,7 +315,13 @@ async def test_forwarded_headers_reach_model_http_request(kind, header_mask):
         return model_stream_response(config.model)
 
     config = settings(kind)
-    header_names = ("X-Agent", "X-Department", "X-Team", "X-User")
+    header_names = (
+        "X-Agent",
+        "X-Department",
+        "X-Team",
+        "X-User",
+        "Ocp-Apim-Subscription-Key",
+    )
     model_headers = {
         name: f"apim-value-{name}"
         for bit, name in enumerate(header_names)
@@ -332,6 +355,8 @@ async def test_forwarded_headers_reach_model_http_request(kind, header_mask):
         assert requests[0].headers.get(name) == model_headers.get(name)
     assert requests[0].headers["authorization"] == "Bearer test-model-credential"
     assert "x-unrelated" not in requests[0].headers
+    assert "Ocp-Apim-Subscription-Key" not in caplog.text
+    assert "apim-value-Ocp-Apim-Subscription-Key" not in caplog.text
     body = json.loads(requests[0].content)
     assert body["model"] == config.model
     assert body["stream"] is True
@@ -357,6 +382,7 @@ async def test_configured_model_endpoint_and_headers(kind, base_url, monkeypatch
         "X-Department": "apim-department",
         "X-Team": "apim-team",
         "X-User": "apim-user",
+        "Ocp-Apim-Subscription-Key": "test-apim-subscription-key",
     }
     requests: list[httpx.Request] = []
 
@@ -471,15 +497,34 @@ async def test_random_load_and_jsonl(live_agent, tmp_path, capsys):
 
 @pytest.mark.parametrize("identity_mode", ["random", "sequence"])
 @pytest.mark.parametrize("seed", [42, 43])
+@pytest.mark.parametrize("with_subscription_keys", [False, True])
 async def test_client_csv_headers_reach_model(
-    live_agent, tmp_path, monkeypatch, identity_mode, seed
+    live_agent, tmp_path, monkeypatch, identity_mode, seed, with_subscription_keys, caplog
 ):
     url, model, config = live_agent
     path = tmp_path / "identities.csv"
+    rows = (
+        ("finance", "globalrisk", "user1"),
+        ("retail", "cards", "user2"),
+        ("technology", "platform", "user3"),
+    )
     path.write_text(
-        "finance,globalrisk,user1\nretail,cards,user2\ntechnology,platform,user3\n",
+        "".join(
+            ",".join(row) + (f",test-primary-{row[2]}" if with_subscription_keys else "") + "\n"
+            for row in rows
+        ),
         encoding="utf-8",
     )
+    captured_requests = []
+    original_send = httpx.AsyncClient.send
+
+    async def capture_send(self, request, *args, **kwargs):
+        if str(request.url).startswith(url):
+            captured_requests.append((request.method, request.headers))
+        return await original_send(self, request, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", capture_send)
+    caplog.set_level(logging.INFO, logger="agents.server")
     identities = load_identities(path)
     rng = random.Random(seed)
     expected = [
@@ -501,6 +546,7 @@ async def test_client_csv_headers_reach_model(
         output=None,
     )
     for _ in range(2):
+        captured_requests.clear()
         prompts = iter(f"CSV request {index}" for index in range(8))
         monkeypatch.setattr(
             "clients.common.random_prompt", lambda *args, prompts=prompts: next(prompts)
@@ -510,6 +556,21 @@ async def test_client_csv_headers_reach_model(
             model.request_kwargs[f"CSV request {index}"]["extra_headers"] for index in range(8)
         ] == expected
         assert all("X-Agent" not in headers for headers in expected)
+        card_headers = [headers for method, headers in captured_requests if method == "GET"]
+        runtime_headers = [headers for method, headers in captured_requests if method == "POST"]
+        assert len(card_headers) == 1 and len(runtime_headers) == 8
+        if with_subscription_keys:
+            assert (
+                card_headers[0]["Ocp-Apim-Subscription-Key"]
+                == expected[0]["Ocp-Apim-Subscription-Key"]
+            )
+            for headers in runtime_headers:
+                assert headers["Ocp-Apim-Subscription-Key"] == f"test-primary-{headers['X-User']}"
+            assert "test-primary-" not in caplog.text
+        else:
+            assert all(
+                "Ocp-Apim-Subscription-Key" not in headers for _, headers in captured_requests
+            )
 
 
 @pytest.mark.parametrize("card_url_mode", ["well-known", "custom"])

@@ -108,3 +108,116 @@ garantiza streaming de duracion ilimitada.
 Las asignaciones de rol en Foundry sobreviven al borrado del resource group de
 Container Apps. Si retiras el despliegue, elimina tambien esas asignaciones
 usando los principal IDs mostrados por el script.
+
+## Usuarios y subscriptions de APIM
+
+[onboard_apim_users.py](onboard_apim_users.py) da de alta usuarios del Developer
+Portal a partir de un CSV sin cabecera `department,team,email`. Para cada
+usuario nuevo establece:
+
+- `firstName`: parte del email anterior a `@`.
+- `lastName`: `Demo`.
+- `email`: valor del CSV.
+- `state`: `active`.
+
+Con `--subscriptions "premium, standard, free"` crea **una subscription por
+usuario**, asociada aleatoriamente a uno de esos **IDs de productos existentes**.
+No crea productos ni les anade APIs. Las subscriptions se crean activas y APIM
+genera sus claves. El script recupera la **primaryKey** y la guarda como cuarta
+columna en un **nuevo fichero con sufijo `.subs`**. Por ejemplo,
+`identities.csv` produce `identities.csv.subs`; el original no se modifica:
+
+```text
+department,team,email,subscription_key
+```
+
+La linea anterior describe el formato: **no anadas una fila de cabecera**.
+Las filas duplicadas para un mismo email comparten usuario, subscription y clave,
+pero conservan sus departamentos y equipos.
+
+### Ejecutar
+
+Requiere una sesion `az login`, Azure CLI y permisos de administracion de
+usuarios/subscriptions sobre APIM, incluido `listSecrets` (por ejemplo,
+API Management Service Contributor). Se ejecuta desde la raiz del repositorio:
+
+```bash
+export AZURE_SUBSCRIPTION_ID="<subscription-id>"
+export RESOURCE_GROUP="finops-for-ai-rg"
+export APIM_NAME="finops4ai"
+
+# Revisar sin crear recursos, recuperar claves ni modificar el CSV.
+uv run python -m deployment.onboard_apim_users \
+  clients/data/identities.csv \
+  --subscriptions "premium, standard, free" --seed 42 --dry-run
+
+# Crear usuarios/subscriptions y generar identities.csv.subs con las claves.
+uv run python -m deployment.onboard_apim_users \
+  clients/data/identities.csv \
+  --subscriptions "premium, standard, free" --seed 42
+
+# Usar las identidades y la clave de cada fila en las peticiones al agente.
+uv run python -m clients.customer --prompt "He perdido mi tarjeta" \
+  --identities-file clients/data/identities.csv.subs
+```
+
+Alternativamente, sustituye las variables por `--azure-subscription-id`,
+`--resource-group` y `--service-name`. El script no carga `.env`.
+`--seed` hace reproducible la seleccion para el mismo conjunto de usuarios
+nuevos y productos. Sin seed, la seleccion no es determinista y no garantiza
+un reparto equilibrado.
+
+Para crear **solo usuarios**, omite `--subscriptions`; en ese caso no consulta
+subscriptions, recupera claves ni genera el fichero `.subs`.
+
+### Reejecuciones y errores
+
+- Valida el CSV completo y la existencia de todos los productos antes de
+  escribir recursos en Azure.
+- Reutiliza usuarios existentes por email, sin distinguir mayusculas. No
+  cambia sus nombres; si no estan activos, falla antes de escribir para no
+  reactivar cuentas bloqueadas de forma implicita.
+- Utiliza IDs estables derivados del email. Reutiliza la subscription creada
+  por este script sin cambiar producto, estado ni claves, aunque cambien
+  las opciones de `--subscriptions`. No reutiliza arbitrariamente otras
+  subscriptions del mismo usuario.
+- En cada ejecucion con subscriptions recupera la clave primaria actual:
+  si fue rotada externamente, actualiza la cuarta columna del fichero `.subs`.
+- Una subscription existente suspendida se conserva suspendida y se muestra
+  su estado; el script no la reactiva. Su clave no autoriza llamadas mientras
+  siga suspendida.
+- Guarda el fichero `.subs` atomicamente despues de completar cada usuario. En Linux,
+  los archivos escritos quedan con permisos `0600`. La cuarta columna puede
+  quedar vacia en usuarios pendientes si una ejecucion se interrumpe.
+- Ante un fallo termina con codigo 1; no revierte usuarios o subscriptions
+  ya creados. Las claves guardadas previamente permanecen y una reejecucion
+  permite continuar. Conserva las claves anteriores de los usuarios pendientes
+  cuando ya existe un fichero de salida. Si no pudo guardar una clave, puede recuperarla al
+  reejecutar sin crear otra subscription.
+- Rechaza enlaces simbolicos y evita sobrescribir un fichero de destino que haya cambiado
+  durante la ejecucion. No ejecutes dos procesos de onboarding sobre el mismo
+  fichero simultaneamente.
+
+### Seguridad y acceso
+
+El fichero `.subs` resultante **contiene secretos**. No se muestran claves en
+consola. El CSV original, incluido el ejemplo versionado
+`clients/data/identities.csv`, permanece intacto.
+Los ficheros `*.csv.subs` estan ignorados por Git. Si la entrada no tiene
+extension `.csv`, excluye tambien su salida `<nombre>.subs` del control de versiones. En Windows,
+comprueba las ACL: `0600` no sustituye a los permisos de Windows.
+
+La clave se envia como `Ocp-Apim-Subscription-Key` tanto al runtime, por
+peticion, como a la descarga de la card usando la identidad de la primera
+peticion. Los productos deben contener las APIs necesarias y estas deben
+exigir subscription key para que se aplique esa proteccion.
+Los agentes propagan tambien la misma clave al endpoint del modelo configurado.
+Si ese endpoint es otra API de APIM con subscription obligatoria, incluye esa
+API en el producto correspondiente. Las llamadas A2A y al modelo son peticiones
+distintas y pueden consumir cada una los contadores del producto.
+
+Estos usuarios pertenecen a APIM, no a Microsoft Entra ID. El script no crea
+passwords conocidos, configura proveedores de identidad, envia invitaciones
+ni garantiza inicio de sesion interactivo en el portal. Tampoco configura
+policies de atribucion, cuotas, rate limits o autenticacion de cabeceras
+`X-Department`, `X-Team` y `X-User`.

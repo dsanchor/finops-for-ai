@@ -30,11 +30,13 @@ def test_load_identities_trims_values_and_supports_bom(tmp_path):
         ("", "at least one row"),
         ("\n", "three non-empty columns"),
         ("finance,team\n", "three non-empty columns"),
-        ("finance,team,user,extra\n", "three non-empty columns"),
+        ("finance,team,user,extra,fifth\n", "three non-empty columns"),
         ("finance, ,user\n", "three non-empty columns"),
         ('finance,team,"user\ninjected"\n', "printable ASCII"),
         ("finance,team,us\u00e9r\n", "printable ASCII"),
         ('finance,team,"unterminated\n', "invalid CSV"),
+        ('finance,team,user,"key\ninjected"\n', "printable ASCII"),
+        ("finance,team,user," + "x" * 257 + "\n", "exceeds 256"),
     ],
 )
 def test_invalid_identity_file_is_rejected(tmp_path, content, message):
@@ -47,6 +49,20 @@ def test_invalid_identity_file_is_rejected(tmp_path, content, message):
 def test_missing_identity_file_is_rejected(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_identities(tmp_path / "missing.csv")
+
+
+def test_optional_subscription_key_is_used_as_header_but_not_in_repr(tmp_path):
+    path = tmp_path / "identities.csv"
+    path.write_text(
+        "finance,team,user@example.com, test-primary-key \nretail,cards,other@example.com,\n",
+        encoding="utf-8",
+    )
+    identity, without_key = load_identities(path)
+    assert identity.subscription_key == "test-primary-key"
+    assert identity.headers()["Ocp-Apim-Subscription-Key"] == "test-primary-key"
+    assert "test-primary-key" not in repr(identity)
+    assert without_key.subscription_key is None
+    assert "Ocp-Apim-Subscription-Key" not in without_key.headers()
 
 
 def test_synthetic_identity_structure():
