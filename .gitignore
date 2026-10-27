@@ -10,3 +10,5 @@ results/
 clients/data/identities.local.csv
 *.csv.subs
 docs/presentation/
+tools/samples
+/data/

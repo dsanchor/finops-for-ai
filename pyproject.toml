@@ -23,6 +23,12 @@ dev = [
     "pytest>=8,<10",
     "pytest-asyncio>=1,<2",
     "ruff>=0.14,<1",
+    { include-group = "finops" },
+]
+finops = [
+    "azure-monitor-query>=1.4,<3",
+    "pandas>=2.2,<4",
+    "pyarrow>=17",
 ]
 
 [tool.pytest.ini_options]
