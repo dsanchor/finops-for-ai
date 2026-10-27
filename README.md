@@ -44,9 +44,9 @@ Edita `.env` con la URL base OpenAI v1 y los nombres de despliegue. Usa el
 mismo cliente y la misma configuracion tanto para APIM como para Azure OpenAI:
 
 ```bash
-OPENAI_BASE_URL=https://finops4ai.azure-api.net/finopsforai/openai/v1
+OPENAI_BASE_URL=https://<apim-endpoint>/finopsforai/openai/v1
 # Alternativa directa, sin APIM:
-# OPENAI_BASE_URL=https://finopsforai.openai.azure.com/openai/v1
+# OPENAI_BASE_URL=https://<foundry-endpoint>/openai/v1
 ```
 
 `RISK_OPENAI_BASE_URL` y `CUSTOMER_OPENAI_BASE_URL` permiten destinos distintos

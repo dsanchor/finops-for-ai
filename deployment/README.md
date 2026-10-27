@@ -41,9 +41,9 @@ export AZURE_SUBSCRIPTION_ID="<subscription-id>"
 export RESOURCE_GROUP="rg-ai-cost-control"
 export LOCATION="swedencentral"
 export FOUNDRY_RESOURCE_ID="/subscriptions/<foundry-subscription-id>/resourceGroups/<foundry-rg>/providers/Microsoft.CognitiveServices/accounts/<foundry-account>"
-export OPENAI_BASE_URL="https://finops4ai.azure-api.net/finopsforai/openai/v1"
+export OPENAI_BASE_URL="https://<apim-endpoint>/finopsforai/openai/v1"
 # Alternativa directa:
-# export OPENAI_BASE_URL="https://finopsforai.openai.azure.com/openai/v1"
+# export OPENAI_BASE_URL="https://<foundry-endpoint>/openai/v1"
 export RISK_IMAGE="ghcr.io/<owner>/<repo>-risk:<tag>"
 export CUSTOMER_IMAGE="ghcr.io/<owner>/<repo>-customer:<tag>"
 

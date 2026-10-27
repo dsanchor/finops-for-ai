@@ -59,10 +59,10 @@ flowchart LR
 
 | Component | Demo resource |
 | --- | --- |
-| APIM instance | `finops4ai` (`https://finops4ai.azure-api.net`), Sweden Central |
+| APIM instance | `finops4ai` (`https://<apim-endpoint>`), Sweden Central |
 | Resource group | `finops-for-ai-rg` |
 | Agents | Container Apps `risk-agent` and `customer-agent` |
-| Models | Foundry account `finopsforai` (`https://finopsforai.services.ai.azure.com/`) |
+| Models | Foundry account `finopsforai` (`https://<foundry-endpoint>/`) |
 | Telemetry | Application Insights `finops4aiappsins` |
 | Visualization | Grafana dashboard UID `ai-tokens-consumption` |
 
@@ -99,7 +99,7 @@ Relevant configuration in Azure:
 | Variable | Value |
 | --- | --- |
 | `AUTH_MODE` | `managed_identity` |
-| `RISK_OPENAI_BASE_URL` / `CUSTOMER_OPENAI_BASE_URL` | `https://finops4ai.azure-api.net/finopsforai/openai/v1` |
+| `RISK_OPENAI_BASE_URL` / `CUSTOMER_OPENAI_BASE_URL` | `https://<apim-endpoint>/finopsforai/openai/v1` |
 | `RISK_MODEL_DEPLOYMENT` | `gpt-5.6-sol` |
 | `CUSTOMER_MODEL_DEPLOYMENT` | `gpt-5.4-mini` |
 | `RISK_MAX_RETRIES` / `CUSTOMER_MAX_RETRIES` | `0`: the first final error is reported |
@@ -205,7 +205,7 @@ rewrites the advertised URL:
 <policies>
     <inbound>
         <base />
-        <set-backend-service base-url="https://finops4ai.azure-api.net" />
+        <set-backend-service base-url="https://<apim-endpoint>" />
         <rewrite-uri template="/risk/agent-card.json" copy-unmatched-params="false" />
     </inbound>
     <backend>
@@ -219,12 +219,12 @@ rewrites the advertised URL:
                     var card = context.Response.Body.As<JObject>();
                     card["supportedInterfaces"] = new JArray(
                         new JObject(
-                            new JProperty("url", "https://finops4ai.azure-api.net/risk/"),
+                            new JProperty("url", "https://<apim-endpoint>/risk/"),
                             new JProperty("protocolBinding", "JSONRPC"),
                             new JProperty("protocolVersion", "1.0")
                         )
                     );
-                    card["url"] = "https://finops4ai.azure-api.net/risk/";
+                    card["url"] = "https://<apim-endpoint>/risk/";
                     return card.ToString(Newtonsoft.Json.Formatting.None);
                 }</set-body>
                 <set-header name="Content-Type" exists-action="override">
@@ -247,7 +247,7 @@ internal call to the A2A API does. The client sends its
 `Ocp-Apim-Subscription-Key`, and APIM forwards it.
 
 > **Important:** always configure the clients with the discovery URL. If
-> `https://finops4ai.azure-api.net/customer-support/agent-card.json` is used,
+> `https://<apim-endpoint>/customer-support/agent-card.json` is used,
 > the client calls the Container App directly. Rate limits aren't applied,
 > `X-Agent` isn't set, and model metrics show `agent=N/A`.
 
@@ -260,9 +260,9 @@ API:
 | --- | --- |
 | APIM API | `finopsforai` |
 | Path | `/finopsforai` |
-| Base URL used by the agents | `https://finops4ai.azure-api.net/finopsforai/openai/v1` |
+| Base URL used by the agents | `https://<apim-endpoint>/finopsforai/openai/v1` |
 | Operation used | `POST /openai/v1/responses` (Responses API) |
-| Backend | `finopsforai-ai-endpoint` -> `https://finopsforai.services.ai.azure.com/` |
+| Backend | `finopsforai-ai-endpoint` -> `https://<foundry-endpoint>/` |
 | APIM -> Foundry authentication | APIM managed identity, resource `https://cognitiveservices.azure.com/` |
 | Subscription | Required, `Ocp-Apim-Subscription-Key` header |
 | Products | `free`, `standard`, `premium` |
@@ -474,8 +474,8 @@ There are two streaming A2A clients: `clients.risk` and `clients.customer`. Each
 one needs the URL of its **discovery Agent Card**:
 
 ```bash
-RISK_AGENT_CARD_URL=https://finops4ai.azure-api.net/risk-discovery/agent-card.json
-CUSTOMER_AGENT_CARD_URL=https://finops4ai.azure-api.net/customer-support-discovery/agent-card.json
+RISK_AGENT_CARD_URL=https://<apim-endpoint>/risk-discovery/agent-card.json
+CUSTOMER_AGENT_CARD_URL=https://<apim-endpoint>/customer-support-discovery/agent-card.json
 ```
 
 With `--identities-file`, each request sends the headers from one CSV row:
@@ -775,11 +775,11 @@ To check where an Agent Card points:
 
 ```bash
 curl -s -H "Ocp-Apim-Subscription-Key: $KEY" \
-  https://finops4ai.azure-api.net/customer-support-discovery/agent-card.json \
+  https://<apim-endpoint>/customer-support-discovery/agent-card.json \
   | jq '.supportedInterfaces'
 ```
 
-It should return `https://finops4ai.azure-api.net/customer-support/`.
+It should return `https://<apim-endpoint>/customer-support/`.
 
 ## 12. Limitations and recommendations
 

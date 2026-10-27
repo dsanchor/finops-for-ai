@@ -67,13 +67,13 @@ HTTP403 sigue sin etiquetarse como cuota confirmada.
 3. Selecciona tu datasource en el campo **Azure Monitor** del formulario de
    importacion.
 4. Comprueba la variable **Application Insights resource ID** del dashboard.
-   El valor inicial es el recurso facilitado para este proyecto:
+   Debe contener el ARM resource ID de tu componente Application Insights:
 
    ```text
-   /subscriptions/0c2b616d-05ea-49f8-b176-e2e06149c164/resourceGroups/finops-for-ai-rg/providers/Microsoft.Insights/components/finops4aiappsins
+   /subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Insights/components/<app-insights-name>
    ```
 
-   Para otro entorno, sustituye ese valor por el ARM resource ID del componente
+   Usa el ARM resource ID del componente
    Application Insights, no el instrumentation key, App ID ni workspace ID.
 5. Elige un intervalo con datos. Inicialmente se consultan las ultimas 24 horas,
    con actualizacion cada 5 minutos y zona horaria UTC.
