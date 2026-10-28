@@ -528,24 +528,16 @@ def test_error_row_distinguishes_physical_logical_origins_and_missing_key_qualit
             assert f"$__contains({dimension}, ${dimension})" in kql
         for dimension in ("agent", "department", "team", "user", "model"):
             assert f"$__contains({dimension}, ${dimension})" not in kql
-    for title, expression in (
-        ("Invocaciones impactadas unicas", "Invocaciones = count()"),
-        ("Excepciones finales observadas - no unicos", "ExcepcionesFinales = count()"),
-    ):
-        kql = panels[title]["targets"][0]["azureLogAnalytics"]["query"]
-        assert kql.endswith("| summarize " + expression)
-    origins = panels["Invocaciones impactadas por origen"]["targets"][0]["azureLogAnalytics"][
+    kql = panels["Excepciones finales observadas - no unicos"]["targets"][0]["azureLogAnalytics"][
         "query"
     ]
-    assert "by bin(timestamp, $__interval), ErrorOrigin" in origins
-    coverage = panels["Cobertura de excepciones finales y correlacion"]["targets"][0][
-        "azureLogAnalytics"
-    ]["query"]
-    assert "SinInvocationId = countif(isempty(InvocationId))" in coverage
-    assert 'SinServicio = countif(service == "(sin dimension)")' in coverage
-    assert 'BajoHTTP200 = countif(RootCode == "200")' in coverage
-    assert "ConSampling = countif(Represented > 1)" in coverage
-    assert "summarize arg_max" not in coverage.split("let FinalFailures = ", 1)[1]
+    assert kql.endswith("| summarize ExcepcionesFinales = count()")
+    for removed in (
+        "Invocaciones impactadas unicas",
+        "Invocaciones impactadas por origen",
+        "Cobertura de excepciones finales y correlacion",
+    ):
+        assert removed not in panels
     http_quality = panels["Calidad de claves de fallos HTTP A2A"]["targets"][0][
         "azureLogAnalytics"
     ]["query"]

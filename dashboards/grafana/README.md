@@ -39,9 +39,10 @@ No se repiten los KPI ni los graficos comunes a varias secciones.
   de limite sin mezclar sus denominadores.
 - **Productos**: comparativa de peticiones, respuestas HTTP429 y tokens,
   consumo por producto/modelo y desglose de entrada/salida.
-- **Errores**: separa rechazos HTTP429 fisicos de invocaciones impactadas unicas,
-  desglosa origen/causa/estado HTTP y expone excepciones sin raiz o sin claves.
-  Los contadores fisicos no se suman al KPI de invocaciones.
+- **Errores**: rechazos HTTP429 fisicos por capa, excepciones finales observadas,
+  tabla de fallos unicos por contexto, origen, causa y estado HTTP, y control de
+  claves ausentes en los fallos HTTP A2A. Los contadores fisicos no se suman a
+  los fallos unicos.
 - **Organizacion**: rankings de agentes y departamentos, tabla de equipos
   identificados por `department + team`, evolucion, matriz de atribucion
   e impacto de respuestas HTTP429.
@@ -337,20 +338,18 @@ La correlacion es **exacta por servicio + invocation_id**, con
 
 Los filtros logicos se aplican tras enriquecer y deduplicar. Ambas fuentes
 respetan el intervalo de Grafana. La raiz puede llegar mas tarde o caer fuera
-de rango: el `leftouter` mantiene visible el fallo sin raiz y el panel
-**Cobertura de excepciones finales y correlacion** distingue coincidencia
-exacta, raiz ausente, ID ausente y servicio ausente. No hay joins aproximados
-por subscription/tiempo. El instante de la excepcion prevalece en la serie
-de invocaciones cuando existe; `RootCode=200` permite reconocer FAILED bajo SSE
-y `UpstreamStatus` muestra el estado del modelo solo cuando se emitio.
+de rango: el `leftouter` mantiene visible el fallo sin raiz, y la columna
+`Correlation` de la tabla de fallos unicos distingue coincidencia exacta y raiz
+ausente. No hay joins aproximados por subscription/tiempo. `RootCode=200`
+permite reconocer FAILED bajo SSE y `UpstreamStatus` muestra el estado del
+modelo solo cuando se emitio.
 
 Las filas sin ID o servicio conocido se cuentan en los controles de calidad,
-pero se **excluyen** del KPI unico: no se colapsan todas como una sola
+pero se **excluyen** de los fallos unicos: no se colapsan todas como una sola
 invocacion ni se inventa una clave. El control HTTP A2A expone tambien sus
 claves ausentes. Los contadores de excepciones representan filas observadas,
 no entidades unicas; sampling, duplicacion, perdidas e intervalos incompletos
-limitan la cobertura. `Representadas` muestra la suma de `itemCount`, no una
-correccion del KPI unico. **Sin excepciones significa ningun fallo instrumentado
+limitan la cobertura. **Sin excepciones significa ningun fallo instrumentado
 observado, no exito demostrado** ni prueba de que el exportador este activo.
 Las tablas de detalle limitan a 1000 grupos; los totales no tienen ese limite.
 

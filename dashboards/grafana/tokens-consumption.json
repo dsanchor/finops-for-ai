@@ -2468,7 +2468,7 @@
       "gridPos": {
         "x": 0,
         "y": 82,
-        "w": 6,
+        "w": 8,
         "h": 4
       },
       "datasource": {
@@ -2542,9 +2542,9 @@
       "type": "stat",
       "description": "Filas requests HTTP POST observadas, incluidos intentos/reintentos. Solo servicio/producto/subscription; convencion llm-rate-limit. Nunca se suman a invocaciones impactadas.",
       "gridPos": {
-        "x": 6,
+        "x": 8,
         "y": 82,
-        "w": 6,
+        "w": 8,
         "h": 4
       },
       "datasource": {
@@ -2618,9 +2618,9 @@
       "type": "stat",
       "description": "Eventos exceptions v1 de ejecuciones finales fallidas, no llamadas al modelo ni intentos. Incluye fallos no429 y sin clave de correlacion. Cero no demuestra exito ni que el exportador este configurado.",
       "gridPos": {
-        "x": 12,
+        "x": 16,
         "y": 82,
-        "w": 6,
+        "w": 8,
         "h": 4
       },
       "datasource": {
@@ -2690,89 +2690,13 @@
       "id": 36
     },
     {
-      "title": "Invocaciones impactadas unicas",
-      "type": "stat",
-      "description": "Invocaciones unicas exactas por (service, invocation_id): union de fallos HTTP A2A y excepciones finales agent_invocation_failed v1, incluso bajo SSE HTTP200. La excepcion tiene prioridad para clasificar el origen. No suma requests del modelo, reintentos ni model_call_id. Sin ID/servicio no se cuenta: consultar calidad. Filtros de contexto A2A, sin Modelo; sin raiz conserva metadatos directos.",
-      "gridPos": {
-        "x": 18,
-        "y": 82,
-        "w": 6,
-        "h": 4
-      },
-      "datasource": {
-        "type": "grafana-azure-monitor-datasource",
-        "uid": "${DS_AZURE_MONITOR}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-azure-monitor-datasource",
-            "uid": "${DS_AZURE_MONITOR}"
-          },
-          "queryType": "Azure Log Analytics",
-          "azureLogAnalytics": {
-            "query": "let IdentityContexts = customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    product = tostring(customDimensions[\"product\"]),\n    subscriptionId = tostring(customDimensions[\"subscriptionId\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    model = tostring(customDimensions[\"model\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    product = iff(isempty(trim(@\"\\s+\", product)), \"(sin dimension)\", trim(@\"\\s+\", product)),\n    subscriptionId = iff(isempty(trim(@\"\\s+\", subscriptionId)), \"(sin dimension)\", trim(@\"\\s+\", subscriptionId)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user)),\n    model = iff(isempty(trim(@\"\\s+\", model)), \"(sin dimension)\", trim(@\"\\s+\", model))\n| where name == \"Total Tokens\"\n| where service != \"(sin dimension)\" and agent != \"(sin dimension)\" and subscriptionId != \"(sin dimension)\"\n| summarize by service, agent, subscriptionId, department, team, user\n| summarize MappingContexts = count(), mapped_department = take_any(department), mapped_team = take_any(team), mapped_user = take_any(user) by service, agent, subscriptionId;\nlet AgentRequests = requests\n| where $__timeFilter(timestamp)\n| where tostring(customDimensions[\"API Type\"]) =~ \"a2a\"\n| where tostring(customDimensions[\"HTTP Method\"]) =~ \"POST\"\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"gen_ai.agent.id\"]),\n    product = tostring(customDimensions[\"Product Name\"]),\n    subscriptionId = tostring(customDimensions[\"Subscription Name\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    api = tostring(customDimensions[\"API Name\"]),\n    ApiType = \"a2a\", LimitType = \"request-rate-limit\",\n    InvocationId = trim(@\"\\s+\", tostring(customDimensions[\"Request Id\"])),\n    Code = tostring(resultCode),\n    Successful = coalesce(tobool(success), false),\n    Represented = coalesce(tolong(itemCount), long(1))\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    product = iff(isempty(trim(@\"\\s+\", product)), \"(sin dimension)\", trim(@\"\\s+\", product)),\n    subscriptionId = iff(isempty(trim(@\"\\s+\", subscriptionId)), \"(sin dimension)\", trim(@\"\\s+\", subscriptionId)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user)),\n    api = iff(isempty(trim(@\"\\s+\", api)), \"(sin dimension)\", trim(@\"\\s+\", api))\n| join kind=leftouter IdentityContexts on service, agent, subscriptionId\n| extend DirectComplete = department != \"(sin dimension)\" and team != \"(sin dimension)\" and user != \"(sin dimension)\",\n    MappingComplete = MappingContexts == 1 and mapped_department != \"(sin dimension)\" and mapped_team != \"(sin dimension)\" and mapped_user != \"(sin dimension)\",\n    IdentityConflict = MappingContexts == 1 and ((department != \"(sin dimension)\" and department != mapped_department) or (team != \"(sin dimension)\" and team != mapped_team) or (user != \"(sin dimension)\" and user != mapped_user))\n| extend CanInfer = coalesce(MappingComplete and not(IdentityConflict), false)\n| extend Attribution = case(\n    DirectComplete, \"directa\",\n    IdentityConflict, \"conflicto\",\n    CanInfer, \"inferida de metricas\",\n    MappingContexts > 1, \"ambigua\",\n    MappingContexts == 1, \"mapeo incompleto\",\n    \"sin correspondencia\")\n| extend department = iff(department == \"(sin dimension)\" and CanInfer, mapped_department, department),\n    team = iff(team == \"(sin dimension)\" and CanInfer, mapped_team, team),\n    user = iff(user == \"(sin dimension)\" and CanInfer, mapped_user, user)\n| project timestamp, service, agent, product, subscriptionId, department, team, user, api, ApiType, LimitType, Code, Successful, Represented, Attribution, InvocationId;\nlet RootRequests = AgentRequests\n| where isnotempty(InvocationId) and service != \"(sin dimension)\"\n| summarize arg_max(timestamp, *) by service, InvocationId;\nlet RootContext = RootRequests\n| project service, InvocationId, RootObserved = true, RootCode = Code, RootAttribution = Attribution,root_agent = agent, root_product = product, root_subscriptionId = subscriptionId, root_department = department, root_team = team, root_user = user;\nlet FinalFailures = exceptions\n| where $__timeFilter(timestamp)\n| where tostring(customDimensions[\"event\"]) == \"agent_invocation_failed\"\n| where tostring(customDimensions[\"schema_version\"]) == \"1\"\n| extend service = trim(@\"\\s+\", tostring(customDimensions[\"service\"])),\n    agent = trim(@\"\\s+\", tostring(customDimensions[\"agent\"])),\n    department = trim(@\"\\s+\", tostring(customDimensions[\"department\"])),\n    team = trim(@\"\\s+\", tostring(customDimensions[\"team\"])),\n    user = trim(@\"\\s+\", tostring(customDimensions[\"user\"])),\n    InvocationId = trim(@\"\\s+\", tostring(customDimensions[\"invocation_id\"])),\n    CorrelationSource = trim(@\"\\s+\", tostring(customDimensions[\"correlation_source\"])),\n    ErrorOrigin = trim(@\"\\s+\", tostring(customDimensions[\"error_origin\"])),\n    ErrorKind = trim(@\"\\s+\", tostring(customDimensions[\"error_kind\"])),\n    ModelCallId = trim(@\"\\s+\", tostring(customDimensions[\"model_call_id\"])),\n    model = trim(@\"\\s+\", tostring(customDimensions[\"model\"])),\n    TaskId = trim(@\"\\s+\", tostring(customDimensions[\"task_id\"])),\n    product = \"(sin dimension)\", subscriptionId = \"(sin dimension)\",\n    UpstreamStatus = toint(customDimensions[\"upstream_status\"]),\n    RetryAfterSeconds = todouble(customDimensions[\"retry_after_seconds\"]),\n    Represented = coalesce(tolong(itemCount), long(1))\n| extend service = iff(isempty(service), \"(sin dimension)\", service),\n    agent = iff(isempty(agent), \"(sin dimension)\", agent),\n    product = iff(isempty(product), \"(sin dimension)\", product),\n    subscriptionId = iff(isempty(subscriptionId), \"(sin dimension)\", subscriptionId),\n    department = iff(isempty(department), \"(sin dimension)\", department),\n    team = iff(isempty(team), \"(sin dimension)\", team),\n    user = iff(isempty(user), \"(sin dimension)\", user),\n    model = iff(isempty(model), \"(sin dimension)\", model),\n    ErrorOrigin = iff(isempty(ErrorOrigin), \"(sin dimension)\", ErrorOrigin),\n    ErrorKind = iff(isempty(ErrorKind), \"(sin dimension)\", ErrorKind)\n| join kind=leftouter RootContext on service, InvocationId\n| extend Correlation = case(isempty(InvocationId), \"sin invocation_id\", service == \"(sin dimension)\", \"sin servicio\", coalesce(RootObserved, false), \"raiz A2A exacta\", \"sin raiz A2A en intervalo\")\n| extend agent = iff(isnotempty(root_agent) and root_agent != \"(sin dimension)\", root_agent, agent),\n    product = iff(isnotempty(root_product) and root_product != \"(sin dimension)\", root_product, product),\n    subscriptionId = iff(isnotempty(root_subscriptionId) and root_subscriptionId != \"(sin dimension)\", root_subscriptionId, subscriptionId),\n    department = iff(isnotempty(root_department) and root_department != \"(sin dimension)\", root_department, department),\n    team = iff(isnotempty(root_team) and root_team != \"(sin dimension)\", root_team, team),\n    user = iff(isnotempty(root_user) and root_user != \"(sin dimension)\", root_user, user);\nlet HttpFailures = RootRequests\n| where not(Successful) or toint(Code) >= 400\n| extend ErrorOrigin = \"http_a2a\", ErrorKind = strcat(\"HTTP \", Code),\n    FailureSource = \"HTTP A2A\", SourcePriority = 0,\n    Correlation = \"raiz A2A exacta\", UpstreamStatus = int(null), RootCode = Code\n| project timestamp, service, InvocationId, agent, product, subscriptionId, department, team, user, ErrorOrigin, ErrorKind, FailureSource, SourcePriority, Correlation, UpstreamStatus, RootCode;\nlet InstrumentedFailures = FinalFailures\n| where isnotempty(InvocationId) and service != \"(sin dimension)\"\n| summarize arg_max(timestamp, *) by service, InvocationId\n| extend FailureSource = \"excepcion final\", SourcePriority = 1\n| project timestamp, service, InvocationId, agent, product, subscriptionId, department, team, user, ErrorOrigin, ErrorKind, FailureSource, SourcePriority, Correlation, UpstreamStatus, RootCode;\nlet Impacted = union HttpFailures, InstrumentedFailures\n| summarize arg_max(SourcePriority, *) by service, InvocationId;\nImpacted\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(product, $product)\n| where $__contains(subscriptionId, $subscriptionId)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize Invocaciones = count()",
-            "resources": [
-              "${appInsightsResourceId}"
-            ],
-            "resultFormat": "table",
-            "dashboardTime": false,
-            "timeColumn": "timestamp"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "decimals": 0,
-          "noValue": "Sin datos",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {}
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "^Porcentaje(Modelo)?$"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "decimals",
-                "value": 1
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "auto"
-      },
-      "id": 37
-    },
-    {
       "title": "HTTP429 fisicos por capa - intentos",
       "type": "timeseries",
       "description": "Series fisicas separadas a2a/http. Solo servicio/producto/subscription. No sumar capas para obtener invocaciones; no clasifica cuota.",
       "gridPos": {
         "x": 0,
         "y": 86,
-        "w": 12,
+        "w": 24,
         "h": 8
       },
       "datasource": {
@@ -2847,91 +2771,7 @@
         }
       },
       "interval": "1m",
-      "id": 38
-    },
-    {
-      "title": "Invocaciones impactadas por origen",
-      "type": "timeseries",
-      "description": "Invocaciones unicas exactas por (service, invocation_id): union de fallos HTTP A2A y excepciones finales agent_invocation_failed v1, incluso bajo SSE HTTP200. La excepcion tiene prioridad para clasificar el origen. No suma requests del modelo, reintentos ni model_call_id. Sin ID/servicio no se cuenta: consultar calidad. Filtros de contexto A2A, sin Modelo; sin raiz conserva metadatos directos. http_a2a = fallo HTTP sin excepcion clasificada. El instante de la excepcion prevalece cuando ambas fuentes existen.",
-      "gridPos": {
-        "x": 12,
-        "y": 86,
-        "w": 12,
-        "h": 8
-      },
-      "datasource": {
-        "type": "grafana-azure-monitor-datasource",
-        "uid": "${DS_AZURE_MONITOR}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-azure-monitor-datasource",
-            "uid": "${DS_AZURE_MONITOR}"
-          },
-          "queryType": "Azure Log Analytics",
-          "azureLogAnalytics": {
-            "query": "let IdentityContexts = customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    product = tostring(customDimensions[\"product\"]),\n    subscriptionId = tostring(customDimensions[\"subscriptionId\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    model = tostring(customDimensions[\"model\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    product = iff(isempty(trim(@\"\\s+\", product)), \"(sin dimension)\", trim(@\"\\s+\", product)),\n    subscriptionId = iff(isempty(trim(@\"\\s+\", subscriptionId)), \"(sin dimension)\", trim(@\"\\s+\", subscriptionId)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user)),\n    model = iff(isempty(trim(@\"\\s+\", model)), \"(sin dimension)\", trim(@\"\\s+\", model))\n| where name == \"Total Tokens\"\n| where service != \"(sin dimension)\" and agent != \"(sin dimension)\" and subscriptionId != \"(sin dimension)\"\n| summarize by service, agent, subscriptionId, department, team, user\n| summarize MappingContexts = count(), mapped_department = take_any(department), mapped_team = take_any(team), mapped_user = take_any(user) by service, agent, subscriptionId;\nlet AgentRequests = requests\n| where $__timeFilter(timestamp)\n| where tostring(customDimensions[\"API Type\"]) =~ \"a2a\"\n| where tostring(customDimensions[\"HTTP Method\"]) =~ \"POST\"\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"gen_ai.agent.id\"]),\n    product = tostring(customDimensions[\"Product Name\"]),\n    subscriptionId = tostring(customDimensions[\"Subscription Name\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    api = tostring(customDimensions[\"API Name\"]),\n    ApiType = \"a2a\", LimitType = \"request-rate-limit\",\n    InvocationId = trim(@\"\\s+\", tostring(customDimensions[\"Request Id\"])),\n    Code = tostring(resultCode),\n    Successful = coalesce(tobool(success), false),\n    Represented = coalesce(tolong(itemCount), long(1))\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    product = iff(isempty(trim(@\"\\s+\", product)), \"(sin dimension)\", trim(@\"\\s+\", product)),\n    subscriptionId = iff(isempty(trim(@\"\\s+\", subscriptionId)), \"(sin dimension)\", trim(@\"\\s+\", subscriptionId)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user)),\n    api = iff(isempty(trim(@\"\\s+\", api)), \"(sin dimension)\", trim(@\"\\s+\", api))\n| join kind=leftouter IdentityContexts on service, agent, subscriptionId\n| extend DirectComplete = department != \"(sin dimension)\" and team != \"(sin dimension)\" and user != \"(sin dimension)\",\n    MappingComplete = MappingContexts == 1 and mapped_department != \"(sin dimension)\" and mapped_team != \"(sin dimension)\" and mapped_user != \"(sin dimension)\",\n    IdentityConflict = MappingContexts == 1 and ((department != \"(sin dimension)\" and department != mapped_department) or (team != \"(sin dimension)\" and team != mapped_team) or (user != \"(sin dimension)\" and user != mapped_user))\n| extend CanInfer = coalesce(MappingComplete and not(IdentityConflict), false)\n| extend Attribution = case(\n    DirectComplete, \"directa\",\n    IdentityConflict, \"conflicto\",\n    CanInfer, \"inferida de metricas\",\n    MappingContexts > 1, \"ambigua\",\n    MappingContexts == 1, \"mapeo incompleto\",\n    \"sin correspondencia\")\n| extend department = iff(department == \"(sin dimension)\" and CanInfer, mapped_department, department),\n    team = iff(team == \"(sin dimension)\" and CanInfer, mapped_team, team),\n    user = iff(user == \"(sin dimension)\" and CanInfer, mapped_user, user)\n| project timestamp, service, agent, product, subscriptionId, department, team, user, api, ApiType, LimitType, Code, Successful, Represented, Attribution, InvocationId;\nlet RootRequests = AgentRequests\n| where isnotempty(InvocationId) and service != \"(sin dimension)\"\n| summarize arg_max(timestamp, *) by service, InvocationId;\nlet RootContext = RootRequests\n| project service, InvocationId, RootObserved = true, RootCode = Code, RootAttribution = Attribution,root_agent = agent, root_product = product, root_subscriptionId = subscriptionId, root_department = department, root_team = team, root_user = user;\nlet FinalFailures = exceptions\n| where $__timeFilter(timestamp)\n| where tostring(customDimensions[\"event\"]) == \"agent_invocation_failed\"\n| where tostring(customDimensions[\"schema_version\"]) == \"1\"\n| extend service = trim(@\"\\s+\", tostring(customDimensions[\"service\"])),\n    agent = trim(@\"\\s+\", tostring(customDimensions[\"agent\"])),\n    department = trim(@\"\\s+\", tostring(customDimensions[\"department\"])),\n    team = trim(@\"\\s+\", tostring(customDimensions[\"team\"])),\n    user = trim(@\"\\s+\", tostring(customDimensions[\"user\"])),\n    InvocationId = trim(@\"\\s+\", tostring(customDimensions[\"invocation_id\"])),\n    CorrelationSource = trim(@\"\\s+\", tostring(customDimensions[\"correlation_source\"])),\n    ErrorOrigin = trim(@\"\\s+\", tostring(customDimensions[\"error_origin\"])),\n    ErrorKind = trim(@\"\\s+\", tostring(customDimensions[\"error_kind\"])),\n    ModelCallId = trim(@\"\\s+\", tostring(customDimensions[\"model_call_id\"])),\n    model = trim(@\"\\s+\", tostring(customDimensions[\"model\"])),\n    TaskId = trim(@\"\\s+\", tostring(customDimensions[\"task_id\"])),\n    product = \"(sin dimension)\", subscriptionId = \"(sin dimension)\",\n    UpstreamStatus = toint(customDimensions[\"upstream_status\"]),\n    RetryAfterSeconds = todouble(customDimensions[\"retry_after_seconds\"]),\n    Represented = coalesce(tolong(itemCount), long(1))\n| extend service = iff(isempty(service), \"(sin dimension)\", service),\n    agent = iff(isempty(agent), \"(sin dimension)\", agent),\n    product = iff(isempty(product), \"(sin dimension)\", product),\n    subscriptionId = iff(isempty(subscriptionId), \"(sin dimension)\", subscriptionId),\n    department = iff(isempty(department), \"(sin dimension)\", department),\n    team = iff(isempty(team), \"(sin dimension)\", team),\n    user = iff(isempty(user), \"(sin dimension)\", user),\n    model = iff(isempty(model), \"(sin dimension)\", model),\n    ErrorOrigin = iff(isempty(ErrorOrigin), \"(sin dimension)\", ErrorOrigin),\n    ErrorKind = iff(isempty(ErrorKind), \"(sin dimension)\", ErrorKind)\n| join kind=leftouter RootContext on service, InvocationId\n| extend Correlation = case(isempty(InvocationId), \"sin invocation_id\", service == \"(sin dimension)\", \"sin servicio\", coalesce(RootObserved, false), \"raiz A2A exacta\", \"sin raiz A2A en intervalo\")\n| extend agent = iff(isnotempty(root_agent) and root_agent != \"(sin dimension)\", root_agent, agent),\n    product = iff(isnotempty(root_product) and root_product != \"(sin dimension)\", root_product, product),\n    subscriptionId = iff(isnotempty(root_subscriptionId) and root_subscriptionId != \"(sin dimension)\", root_subscriptionId, subscriptionId),\n    department = iff(isnotempty(root_department) and root_department != \"(sin dimension)\", root_department, department),\n    team = iff(isnotempty(root_team) and root_team != \"(sin dimension)\", root_team, team),\n    user = iff(isnotempty(root_user) and root_user != \"(sin dimension)\", root_user, user);\nlet HttpFailures = RootRequests\n| where not(Successful) or toint(Code) >= 400\n| extend ErrorOrigin = \"http_a2a\", ErrorKind = strcat(\"HTTP \", Code),\n    FailureSource = \"HTTP A2A\", SourcePriority = 0,\n    Correlation = \"raiz A2A exacta\", UpstreamStatus = int(null), RootCode = Code\n| project timestamp, service, InvocationId, agent, product, subscriptionId, department, team, user, ErrorOrigin, ErrorKind, FailureSource, SourcePriority, Correlation, UpstreamStatus, RootCode;\nlet InstrumentedFailures = FinalFailures\n| where isnotempty(InvocationId) and service != \"(sin dimension)\"\n| summarize arg_max(timestamp, *) by service, InvocationId\n| extend FailureSource = \"excepcion final\", SourcePriority = 1\n| project timestamp, service, InvocationId, agent, product, subscriptionId, department, team, user, ErrorOrigin, ErrorKind, FailureSource, SourcePriority, Correlation, UpstreamStatus, RootCode;\nlet Impacted = union HttpFailures, InstrumentedFailures\n| summarize arg_max(SourcePriority, *) by service, InvocationId;\nImpacted\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(product, $product)\n| where $__contains(subscriptionId, $subscriptionId)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize Invocaciones = count()\n    by bin(timestamp, $__interval), ErrorOrigin\n| order by timestamp asc",
-            "resources": [
-              "${appInsightsResourceId}"
-            ],
-            "resultFormat": "time_series",
-            "dashboardTime": false,
-            "timeColumn": "timestamp"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "decimals": 0,
-          "noValue": "Sin datos",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "^Porcentaje(Modelo)?$"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "decimals",
-                "value": 1
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "sum"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "interval": "1m",
-      "id": 39
+      "id": 37
     },
     {
       "title": "Fallos unicos por contexto, origen y causa",
@@ -3002,87 +2842,16 @@
           "show": false
         }
       },
-      "id": 40
-    },
-    {
-      "title": "Cobertura de excepciones finales y correlacion",
-      "type": "table",
-      "description": "Filas de excepciones antes de deduplicar, con filtros A2A salvo Modelo. Sin ID/servicio se muestran, pero no se colapsan como una sola invocacion ni se incluyen en el KPI unico. Sin raiz no significa sin fallo: la peticion puede llegar tarde o estar fuera de rango. Tabla vacia no prueba exito.",
-      "gridPos": {
-        "x": 0,
-        "y": 103,
-        "w": 12,
-        "h": 9
-      },
-      "datasource": {
-        "type": "grafana-azure-monitor-datasource",
-        "uid": "${DS_AZURE_MONITOR}"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "grafana-azure-monitor-datasource",
-            "uid": "${DS_AZURE_MONITOR}"
-          },
-          "queryType": "Azure Log Analytics",
-          "azureLogAnalytics": {
-            "query": "let IdentityContexts = customMetrics\n| where $__timeFilter(timestamp)\n| where name in (\"Prompt Tokens\", \"Completion Tokens\", \"Total Tokens\")\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"agent\"]),\n    product = tostring(customDimensions[\"product\"]),\n    subscriptionId = tostring(customDimensions[\"subscriptionId\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    model = tostring(customDimensions[\"model\"]),\n    Tokens = todouble(valueSum)\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    product = iff(isempty(trim(@\"\\s+\", product)), \"(sin dimension)\", trim(@\"\\s+\", product)),\n    subscriptionId = iff(isempty(trim(@\"\\s+\", subscriptionId)), \"(sin dimension)\", trim(@\"\\s+\", subscriptionId)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user)),\n    model = iff(isempty(trim(@\"\\s+\", model)), \"(sin dimension)\", trim(@\"\\s+\", model))\n| where name == \"Total Tokens\"\n| where service != \"(sin dimension)\" and agent != \"(sin dimension)\" and subscriptionId != \"(sin dimension)\"\n| summarize by service, agent, subscriptionId, department, team, user\n| summarize MappingContexts = count(), mapped_department = take_any(department), mapped_team = take_any(team), mapped_user = take_any(user) by service, agent, subscriptionId;\nlet AgentRequests = requests\n| where $__timeFilter(timestamp)\n| where tostring(customDimensions[\"API Type\"]) =~ \"a2a\"\n| where tostring(customDimensions[\"HTTP Method\"]) =~ \"POST\"\n| extend\n    service = tostring(customDimensions[\"Service ID\"]),\n    agent = tostring(customDimensions[\"gen_ai.agent.id\"]),\n    product = tostring(customDimensions[\"Product Name\"]),\n    subscriptionId = tostring(customDimensions[\"Subscription Name\"]),\n    department = tostring(customDimensions[\"department\"]),\n    team = tostring(customDimensions[\"team\"]),\n    user = tostring(customDimensions[\"user\"]),\n    api = tostring(customDimensions[\"API Name\"]),\n    ApiType = \"a2a\", LimitType = \"request-rate-limit\",\n    InvocationId = trim(@\"\\s+\", tostring(customDimensions[\"Request Id\"])),\n    Code = tostring(resultCode),\n    Successful = coalesce(tobool(success), false),\n    Represented = coalesce(tolong(itemCount), long(1))\n| extend\n    service = iff(isempty(trim(@\"\\s+\", service)), \"(sin dimension)\", trim(@\"\\s+\", service)),\n    agent = iff(isempty(trim(@\"\\s+\", agent)), \"(sin dimension)\", trim(@\"\\s+\", agent)),\n    product = iff(isempty(trim(@\"\\s+\", product)), \"(sin dimension)\", trim(@\"\\s+\", product)),\n    subscriptionId = iff(isempty(trim(@\"\\s+\", subscriptionId)), \"(sin dimension)\", trim(@\"\\s+\", subscriptionId)),\n    department = iff(isempty(trim(@\"\\s+\", department)), \"(sin dimension)\", trim(@\"\\s+\", department)),\n    team = iff(isempty(trim(@\"\\s+\", team)), \"(sin dimension)\", trim(@\"\\s+\", team)),\n    user = iff(isempty(trim(@\"\\s+\", user)), \"(sin dimension)\", trim(@\"\\s+\", user)),\n    api = iff(isempty(trim(@\"\\s+\", api)), \"(sin dimension)\", trim(@\"\\s+\", api))\n| join kind=leftouter IdentityContexts on service, agent, subscriptionId\n| extend DirectComplete = department != \"(sin dimension)\" and team != \"(sin dimension)\" and user != \"(sin dimension)\",\n    MappingComplete = MappingContexts == 1 and mapped_department != \"(sin dimension)\" and mapped_team != \"(sin dimension)\" and mapped_user != \"(sin dimension)\",\n    IdentityConflict = MappingContexts == 1 and ((department != \"(sin dimension)\" and department != mapped_department) or (team != \"(sin dimension)\" and team != mapped_team) or (user != \"(sin dimension)\" and user != mapped_user))\n| extend CanInfer = coalesce(MappingComplete and not(IdentityConflict), false)\n| extend Attribution = case(\n    DirectComplete, \"directa\",\n    IdentityConflict, \"conflicto\",\n    CanInfer, \"inferida de metricas\",\n    MappingContexts > 1, \"ambigua\",\n    MappingContexts == 1, \"mapeo incompleto\",\n    \"sin correspondencia\")\n| extend department = iff(department == \"(sin dimension)\" and CanInfer, mapped_department, department),\n    team = iff(team == \"(sin dimension)\" and CanInfer, mapped_team, team),\n    user = iff(user == \"(sin dimension)\" and CanInfer, mapped_user, user)\n| project timestamp, service, agent, product, subscriptionId, department, team, user, api, ApiType, LimitType, Code, Successful, Represented, Attribution, InvocationId;\nlet RootRequests = AgentRequests\n| where isnotempty(InvocationId) and service != \"(sin dimension)\"\n| summarize arg_max(timestamp, *) by service, InvocationId;\nlet RootContext = RootRequests\n| project service, InvocationId, RootObserved = true, RootCode = Code, RootAttribution = Attribution,root_agent = agent, root_product = product, root_subscriptionId = subscriptionId, root_department = department, root_team = team, root_user = user;\nlet FinalFailures = exceptions\n| where $__timeFilter(timestamp)\n| where tostring(customDimensions[\"event\"]) == \"agent_invocation_failed\"\n| where tostring(customDimensions[\"schema_version\"]) == \"1\"\n| extend service = trim(@\"\\s+\", tostring(customDimensions[\"service\"])),\n    agent = trim(@\"\\s+\", tostring(customDimensions[\"agent\"])),\n    department = trim(@\"\\s+\", tostring(customDimensions[\"department\"])),\n    team = trim(@\"\\s+\", tostring(customDimensions[\"team\"])),\n    user = trim(@\"\\s+\", tostring(customDimensions[\"user\"])),\n    InvocationId = trim(@\"\\s+\", tostring(customDimensions[\"invocation_id\"])),\n    CorrelationSource = trim(@\"\\s+\", tostring(customDimensions[\"correlation_source\"])),\n    ErrorOrigin = trim(@\"\\s+\", tostring(customDimensions[\"error_origin\"])),\n    ErrorKind = trim(@\"\\s+\", tostring(customDimensions[\"error_kind\"])),\n    ModelCallId = trim(@\"\\s+\", tostring(customDimensions[\"model_call_id\"])),\n    model = trim(@\"\\s+\", tostring(customDimensions[\"model\"])),\n    TaskId = trim(@\"\\s+\", tostring(customDimensions[\"task_id\"])),\n    product = \"(sin dimension)\", subscriptionId = \"(sin dimension)\",\n    UpstreamStatus = toint(customDimensions[\"upstream_status\"]),\n    RetryAfterSeconds = todouble(customDimensions[\"retry_after_seconds\"]),\n    Represented = coalesce(tolong(itemCount), long(1))\n| extend service = iff(isempty(service), \"(sin dimension)\", service),\n    agent = iff(isempty(agent), \"(sin dimension)\", agent),\n    product = iff(isempty(product), \"(sin dimension)\", product),\n    subscriptionId = iff(isempty(subscriptionId), \"(sin dimension)\", subscriptionId),\n    department = iff(isempty(department), \"(sin dimension)\", department),\n    team = iff(isempty(team), \"(sin dimension)\", team),\n    user = iff(isempty(user), \"(sin dimension)\", user),\n    model = iff(isempty(model), \"(sin dimension)\", model),\n    ErrorOrigin = iff(isempty(ErrorOrigin), \"(sin dimension)\", ErrorOrigin),\n    ErrorKind = iff(isempty(ErrorKind), \"(sin dimension)\", ErrorKind)\n| join kind=leftouter RootContext on service, InvocationId\n| extend Correlation = case(isempty(InvocationId), \"sin invocation_id\", service == \"(sin dimension)\", \"sin servicio\", coalesce(RootObserved, false), \"raiz A2A exacta\", \"sin raiz A2A en intervalo\")\n| extend agent = iff(isnotempty(root_agent) and root_agent != \"(sin dimension)\", root_agent, agent),\n    product = iff(isnotempty(root_product) and root_product != \"(sin dimension)\", root_product, product),\n    subscriptionId = iff(isnotempty(root_subscriptionId) and root_subscriptionId != \"(sin dimension)\", root_subscriptionId, subscriptionId),\n    department = iff(isnotempty(root_department) and root_department != \"(sin dimension)\", root_department, department),\n    team = iff(isnotempty(root_team) and root_team != \"(sin dimension)\", root_team, team),\n    user = iff(isnotempty(root_user) and root_user != \"(sin dimension)\", root_user, user);\nFinalFailures\n| where $__contains(service, $service)\n| where $__contains(agent, $agent)\n| where $__contains(product, $product)\n| where $__contains(subscriptionId, $subscriptionId)\n| where $__contains(department, $department)\n| where $__contains(team, $team)\n| where $__contains(user, $user)\n| summarize Excepciones = count(),\n    SinInvocationId = countif(isempty(InvocationId)),\n    SinServicio = countif(service == \"(sin dimension)\"),\n    Correlacionadas = countif(Correlation == \"raiz A2A exacta\"),\n    BajoHTTP200 = countif(RootCode == \"200\"),\n    ConSampling = countif(Represented > 1),\n    Representadas = sum(Represented)\n    by Correlation, CorrelationSource\n| order by Excepciones desc",
-            "resources": [
-              "${appInsightsResourceId}"
-            ],
-            "resultFormat": "table",
-            "dashboardTime": false,
-            "timeColumn": "timestamp"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "decimals": 0,
-          "noValue": "Sin datos",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {}
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "^Porcentaje(Modelo)?$"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "decimals",
-                "value": 1
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm",
-        "footer": {
-          "show": false
-        }
-      },
-      "id": 41
+      "id": 38
     },
     {
       "title": "Calidad de claves de fallos HTTP A2A",
       "type": "table",
       "description": "Filas fisicas fallidas A2A antes de deduplicar. Sin ID o servicio no entra en invocaciones unicas: volumen incompleto, no cero fallos. Modelo no filtra. HTTP200 successful no descubre FAILED de SSE.",
       "gridPos": {
-        "x": 12,
+        "x": 0,
         "y": 103,
-        "w": 12,
+        "w": 24,
         "h": 9
       },
       "datasource": {
@@ -3144,7 +2913,7 @@
           "show": false
         }
       },
-      "id": 42
+      "id": 39
     },
     {
       "title": "Productos y subscriptions",
@@ -3157,7 +2926,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 43
+      "id": 40
     },
     {
       "title": "Alcance y lectura",
@@ -3172,7 +2941,7 @@
         "mode": "markdown",
         "content": "**Consumo y acceso por producto/subscription.** Cada fuente se agrega antes de cruzarla; no se multiplican peticiones por filas de tokens. Tokens ausentes quedan como Sin datos, no cero. El filtro Modelo solo afecta al consumo. Las columnas HTTP del modelo ignoran agente e identidad. Product Name de requests debe coincidir con product de customMetrics."
       },
-      "id": 44
+      "id": 41
     },
     {
       "title": "Consumo por producto - Top N",
@@ -3247,7 +3016,7 @@
         },
         "xTickLabelRotation": 0
       },
-      "id": 45
+      "id": 42
     },
     {
       "title": "Consumo por modelo - Top N",
@@ -3322,7 +3091,7 @@
         },
         "xTickLabelRotation": 0
       },
-      "id": 46
+      "id": 43
     },
     {
       "title": "Comparativa de productos: peticiones, HTTP429 y tokens",
@@ -3393,7 +3162,7 @@
           "show": false
         }
       },
-      "id": 47
+      "id": 44
     },
     {
       "title": "Consumo por producto y modelo",
@@ -3464,7 +3233,7 @@
           "show": false
         }
       },
-      "id": 48
+      "id": 45
     },
     {
       "title": "Subscriptions: peticiones y respuestas HTTP429",
@@ -3535,7 +3304,7 @@
           "show": false
         }
       },
-      "id": 49
+      "id": 46
     },
     {
       "title": "Reparto organizativo",
@@ -3548,7 +3317,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 50
+      "id": 47
     },
     {
       "title": "Alcance y lectura",
@@ -3563,7 +3332,7 @@
         "mode": "markdown",
         "content": "**Atribucion del consumo, no facturacion.** Compara agentes y departamentos; los equipos se distinguen por departamento. Las tablas muestran hasta 1000 filas. Top N solo limita los graficos, no las tablas. Las tablas de HTTP429 solo incluyen A2A (request-rate-limit), no limites LLM."
       },
-      "id": 51
+      "id": 48
     },
     {
       "title": "Consumo por agente - Top N",
@@ -3638,7 +3407,7 @@
         },
         "xTickLabelRotation": 0
       },
-      "id": 52
+      "id": 49
     },
     {
       "title": "Consumo por departamento - Top N",
@@ -3713,7 +3482,7 @@
         },
         "xTickLabelRotation": 0
       },
-      "id": 53
+      "id": 50
     },
     {
       "title": "Consumo por departamento y equipo",
@@ -3784,7 +3553,7 @@
           "show": false
         }
       },
-      "id": 54
+      "id": 51
     },
     {
       "title": "Evolucion por agente - Top N",
@@ -3868,7 +3637,7 @@
         }
       },
       "interval": "1m",
-      "id": 55
+      "id": 52
     },
     {
       "title": "Evolucion por departamento - Top N",
@@ -3952,7 +3721,7 @@
         }
       },
       "interval": "1m",
-      "id": 56
+      "id": 53
     },
     {
       "title": "Matriz de atribucion: agente / departamento / equipo",
@@ -4023,7 +3792,7 @@
           "show": false
         }
       },
-      "id": 57
+      "id": 54
     },
     {
       "title": "Departamentos y equipos: impacto de HTTP429",
@@ -4094,7 +3863,7 @@
           "show": false
         }
       },
-      "id": 58
+      "id": 55
     },
     {
       "title": "Usuarios",
@@ -4107,7 +3876,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 59
+      "id": 56
     },
     {
       "title": "Alcance y lectura",
@@ -4122,7 +3891,7 @@
         "mode": "markdown",
         "content": "**Vista con identificadores de usuario: restringe su acceso.** Permite identificar concentracion de consumo y atribucion por organizacion. Los tokens y las peticiones se calculan por separado. Las tablas de acceso y rankings de HTTP429 solo incluyen A2A (request-rate-limit), no limites LLM; identifican atribucion inferida o ausente. Top N se calcula para todo el rango."
       },
-      "id": 60
+      "id": 57
     },
     {
       "title": "Concentracion en Top N usuarios",
@@ -4198,7 +3967,7 @@
         "graphMode": "none",
         "textMode": "auto"
       },
-      "id": 61
+      "id": 58
     },
     {
       "title": "Tokens sin usuario",
@@ -4274,7 +4043,7 @@
         "graphMode": "none",
         "textMode": "auto"
       },
-      "id": 62
+      "id": 59
     },
     {
       "title": "Consumo por usuario - Top N",
@@ -4349,7 +4118,7 @@
         },
         "xTickLabelRotation": 0
       },
-      "id": 63
+      "id": 60
     },
     {
       "title": "Evolucion por usuario - Top N",
@@ -4433,7 +4202,7 @@
         }
       },
       "interval": "1m",
-      "id": 64
+      "id": 61
     },
     {
       "title": "Detalle de consumo por usuario y contexto",
@@ -4504,7 +4273,7 @@
           "show": false
         }
       },
-      "id": 65
+      "id": 62
     },
     {
       "title": "Usuarios y subscriptions: impacto de HTTP429",
@@ -4575,7 +4344,7 @@
           "show": false
         }
       },
-      "id": 66
+      "id": 63
     },
     {
       "title": "Usuarios con mas HTTP429 - Top N",
@@ -4650,7 +4419,7 @@
         },
         "xTickLabelRotation": 0
       },
-      "id": 67
+      "id": 64
     },
     {
       "title": "Usuarios con mayor porcentaje HTTP429 - Top N",
@@ -4725,7 +4494,7 @@
         },
         "xTickLabelRotation": 0
       },
-      "id": 68
+      "id": 65
     },
     {
       "title": "Calidad de datos",
@@ -4738,7 +4507,7 @@
         "w": 24,
         "h": 1
       },
-      "id": 69
+      "id": 66
     },
     {
       "title": "Minutos desde la ultima metrica",
@@ -4814,7 +4583,7 @@
         "graphMode": "none",
         "textMode": "auto"
       },
-      "id": 70
+      "id": 67
     },
     {
       "title": "Diferencia: total - entrada - salida",
@@ -4890,7 +4659,7 @@
         "graphMode": "none",
         "textMode": "auto"
       },
-      "id": 71
+      "id": 68
     },
     {
       "title": "Calidad de las metricas",
@@ -4961,7 +4730,7 @@
           "show": false
         }
       },
-      "id": 72
+      "id": 69
     },
     {
       "title": "Tokens sin atribucion completa",
@@ -5032,7 +4801,7 @@
           "show": false
         }
       },
-      "id": 73
+      "id": 70
     },
     {
       "title": "Peticiones con identidad completa - cobertura",
@@ -5108,7 +4877,7 @@
         "graphMode": "none",
         "textMode": "auto"
       },
-      "id": 74
+      "id": 71
     },
     {
       "title": "Peticiones sin identidad completa",
@@ -5184,7 +4953,7 @@
         "graphMode": "none",
         "textMode": "auto"
       },
-      "id": 75
+      "id": 72
     },
     {
       "title": "Sampling de requests",
@@ -5255,7 +5024,7 @@
           "show": false
         }
       },
-      "id": 76
+      "id": 73
     },
     {
       "title": "Cobertura y origen de la identidad de requests",
@@ -5326,7 +5095,7 @@
           "show": false
         }
       },
-      "id": 77
+      "id": 74
     }
   ],
   "annotations": {

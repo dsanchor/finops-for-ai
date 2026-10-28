@@ -815,14 +815,9 @@ def error_panels():
                 "ni intentos. Incluye fallos no429 y sin clave de correlacion. "
                 "Cero no demuestra exito ni que el exportador este configurado.",
             ),
-            (
-                "Invocaciones impactadas unicas",
-                impacted_invocations() + "\n| summarize Invocaciones = count()",
-                logical_description,
-            ),
         )
     ):
-        panels.append(panel(title, "stat", query, index * 6, 3, 6, 4, description))
+        panels.append(panel(title, "stat", query, index * 8, 3, 8, 4, description))
     panels.extend(
         [
             panel(
@@ -834,24 +829,10 @@ def error_panels():
                 + "\n| order by timestamp asc",
                 0,
                 7,
-                12,
+                24,
                 8,
                 "Series fisicas separadas a2a/http. Solo servicio/producto/subscription. "
                 "No sumar capas para obtener invocaciones; no clasifica cuota.",
-            ),
-            panel(
-                "Invocaciones impactadas por origen",
-                "timeseries",
-                impacted_invocations()
-                + "\n| summarize Invocaciones = count()"
-                + "\n    by bin(timestamp, $__interval), ErrorOrigin"
-                + "\n| order by timestamp asc",
-                12,
-                7,
-                12,
-                8,
-                logical_description + " http_a2a = fallo HTTP sin excepcion clasificada. "
-                "El instante de la excepcion prevalece cuando ambas fuentes existen.",
             ),
             panel(
                 "Fallos unicos por contexto, origen y causa",
@@ -870,28 +851,6 @@ def error_panels():
                 "HTTP403 solo es estado, no cuota. Maximo 1000 grupos.",
             ),
             panel(
-                "Cobertura de excepciones finales y correlacion",
-                "table",
-                final_failure_base()
-                + "\n| summarize Excepciones = count(),"
-                + "\n    SinInvocationId = countif(isempty(InvocationId)),"
-                + f'\n    SinServicio = countif(service == "{MISSING}"),'
-                + '\n    Correlacionadas = countif(Correlation == "raiz A2A exacta"),'
-                + '\n    BajoHTTP200 = countif(RootCode == "200"),'
-                + "\n    ConSampling = countif(Represented > 1),"
-                + "\n    Representadas = sum(Represented)"
-                + "\n    by Correlation, CorrelationSource"
-                + "\n| order by Excepciones desc",
-                0,
-                24,
-                12,
-                9,
-                "Filas de excepciones antes de deduplicar, con filtros A2A salvo Modelo. "
-                "Sin ID/servicio se muestran, pero no se colapsan como una sola invocacion "
-                "ni se incluyen en el KPI unico. Sin raiz no significa sin fallo: la peticion "
-                "puede llegar tarde o estar fuera de rango. Tabla vacia no prueba exito.",
-            ),
-            panel(
                 "Calidad de claves de fallos HTTP A2A",
                 "table",
                 request_base()
@@ -902,9 +861,9 @@ def error_panels():
                 + "\n    ConSampling = countif(Represented > 1)"
                 + "\n    by service"
                 + "\n| order by FallosHTTPObservados desc",
-                12,
+                0,
                 24,
-                12,
+                24,
                 9,
                 "Filas fisicas fallidas A2A antes de deduplicar. Sin ID o servicio no entra "
                 "en invocaciones unicas: volumen incompleto, no cero fallos. "

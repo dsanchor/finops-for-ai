@@ -214,6 +214,13 @@ habilitan reintentos; cada ejecucion tiene identificadores aislados.
 Actualmente cada ejecucion realiza una llamada logica al modelo, sin herramientas.
 Si se introducen varias llamadas por ejecucion, habra que asignar un
 `model_call_id` distinto a cada una.
+
+Tambien se reenvian, si llegan, `Request-Id` y `Request-Context`: el contexto de
+traza de Application Insights con correlacion **Legacy** (`httpCorrelationProtocol`
+del diagnostico de APIM). Asi la peticion al modelo comparte `operation_Id` con la
+peticion A2A y aparece dentro de la misma transaccion de extremo a extremo. Si APIM
+pasa a correlacion W3C, habra que reenviar `traceparent` y `tracestate`. Estas
+cabeceras no se registran en el log `request_headers`.
 `MAX_RETRIES=0` es el nuevo valor predeterminado, pero revisa los overrides y
 ficheros `.env` existentes: un `MAX_RETRIES=2` explicito mantiene los reintentos.
 

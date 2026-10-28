@@ -49,6 +49,10 @@ from agents.telemetry import ExceptionTelemetry, record_failure
 
 logger = logging.getLogger(__name__)
 
+# Application Insights legacy correlation (APIM httpCorrelationProtocol = Legacy): forwarding the
+# incoming trace context makes the model call part of the same APIM operation as the A2A call.
+TRACE_HEADERS = ("Request-Id", "Request-Context")
+
 
 class UsageExecutor(A2AExecutor):
     def __init__(
@@ -113,6 +117,9 @@ class UsageExecutor(A2AExecutor):
         )
         model_headers["X-Invocation-Id"] = str(self.correlation["invocation_id"])
         model_headers["X-Model-Call-Id"] = str(self.correlation["model_call_id"])
+        model_headers.update(
+            {name: value for name in TRACE_HEADERS if (value := headers.get(name)) is not None}
+        )
         run_kwargs = {"client_kwargs": {"extra_headers": model_headers}} if model_headers else {}
         super().__init__(agent, stream=True, run_kwargs=run_kwargs)
         self.settings = settings

@@ -1,4 +1,4 @@
-# FinOps and FOCUS: from gateway telemetry to cost allocation
+ # FinOps and FOCUS: from gateway telemetry to cost allocation
 
 This document extends [README.md](README.md). The demo measures **tokens**; this
 document explains how to turn them into **cost**: how to estimate it, how to take

@@ -68,7 +68,7 @@ def without_correlation(headers):
     return {
         name: value
         for name, value in headers.items()
-        if name not in ("X-Invocation-Id", "X-Model-Call-Id")
+        if name not in ("X-Invocation-Id", "X-Model-Call-Id", "Request-Id", "Request-Context")
     }
 
 
@@ -361,6 +361,11 @@ async def test_forwarded_headers_reach_model_http_request(kind, header_mask, cap
     incoming_headers.update(
         {"x-product-id": "blocked-product", "x-subscription-id": "blocked-subscription-id"}
     )
+    trace = {
+        "request-id": f"|trace-{kind}-{header_mask}.span.",
+        "request-context": "appId=cid-v1:x",
+    }
+    incoming_headers.update(trace)
     context = RequestContext(
         call_context=ServerCallContext(state={"headers": incoming_headers}),
         request=SendMessageRequest(
@@ -389,6 +394,9 @@ async def test_forwarded_headers_reach_model_http_request(kind, header_mask, cap
     assert "x-unrelated" not in requests[0].headers
     assert "X-Product-Id" not in requests[0].headers
     assert "X-Subscription-Id" not in requests[0].headers
+    assert requests[0].headers["Request-Id"] == trace["request-id"]
+    assert requests[0].headers["Request-Context"] == trace["request-context"]
+    assert trace["request-id"] not in caplog.text
     assert "Ocp-Apim-Subscription-Key" not in caplog.text
     assert "apim-value-Ocp-Apim-Subscription-Key" not in caplog.text
     assert "blocked-product" not in caplog.text
